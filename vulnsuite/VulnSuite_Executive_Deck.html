@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>VulnSuite — Executive Briefing</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;background:#f8fafc;color:#1e293b;overflow-x:hidden}
+.slide{min-height:100vh;padding:80px 10%;display:flex;flex-direction:column;justify-content:center;border-bottom:1px solid #e2e8f0;position:relative;background:#f8fafc}
+.slide::before{content:attr(data-num);position:absolute;top:30px;right:40px;color:#cbd5e1;font-size:14px;letter-spacing:2px}
+h1{font-size:64px;font-weight:800;color:#0a2540;margin-bottom:24px;line-height:1.1}
+h2{font-size:44px;font-weight:700;color:#0a2540;margin-bottom:32px;line-height:1.15}
+h2 .accent{color:#f38020}
+h3{font-size:22px;color:#1e40af;margin-bottom:16px;font-weight:600;letter-spacing:0.5px}
+.subtitle{font-size:22px;color:#475569;margin-bottom:48px;max-width:900px;line-height:1.5}
+.tag{display:inline-block;padding:6px 14px;background:#fff6ee;color:#f38020;border:1px solid #f38020;border-radius:20px;font-size:12px;font-weight:600;letter-spacing:1.5px;margin-bottom:24px}
+.grid{display:grid;gap:24px;margin-top:32px}
+.grid-2{grid-template-columns:1fr 1fr}
+.grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+.card{background:#ffffff;border:1px solid #e2e8f0;border-radius:16px;padding:28px;transition:all .3s;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+.card:hover{border-color:#f38020;transform:translateY(-4px);box-shadow:0 6px 14px rgba(243,128,32,.08)}
+.card h3{color:#f38020;font-size:20px;margin-bottom:12px}
+.card ul{list-style:none;margin-top:12px}
+.card li{color:#334155;font-size:14px;padding:6px 0 6px 20px;position:relative;line-height:1.5}
+.card li::before{content:"▸";position:absolute;left:0;color:#f38020;font-weight:bold}
+.metric{text-align:center;padding:32px 20px}
+.metric .num{font-size:72px;font-weight:900;color:#0a2540;line-height:1}
+.metric .lbl{color:#64748b;font-size:14px;margin-top:8px;text-transform:uppercase;letter-spacing:1.5px}
+.formula{font-family:"SF Mono",Consolas,monospace;font-size:28px;text-align:center;padding:40px;background:#ffffff;border:1px solid #f38020;border-radius:16px;margin:32px 0;color:#0a2540;box-shadow:0 1px 4px rgba(15,23,42,.06)}
+.bucket{display:flex;gap:16px;margin-top:24px}
+.bucket > div{flex:1;padding:20px;border-radius:12px;text-align:center;font-weight:700}
+.p0{background:#b91c1c;color:#fff}
+.p1{background:#ea580c;color:#fff}
+.p2{background:#ca8a04;color:#fff}
+.p3{background:#2563eb;color:#fff}
+.p4{background:#6b7280;color:#fff}
+table{width:100%;border-collapse:collapse;margin-top:24px;font-size:14px;background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+th{background:#f1f5f9;color:#0a2540;padding:14px;text-align:left;border-bottom:2px solid #f38020;text-transform:uppercase;font-size:12px;letter-spacing:1px}
+td{padding:14px;border-bottom:1px solid #e2e8f0;color:#334155}
+tr:hover td{background:#f8fafc}
+.nav{position:fixed;top:20px;left:20px;z-index:100;background:rgba(255,255,255,.92);backdrop-filter:blur(10px);padding:10px 18px;border-radius:24px;border:1px solid #e2e8f0;font-size:12px;color:#475569;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+.hero-logo{font-size:120px;margin-bottom:20px}
+.footer-note{margin-top:48px;padding-top:24px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:12px;letter-spacing:1px}
+.diff-row{display:flex;gap:20px;padding:20px;background:#ffffff;border-left:4px solid #f38020;margin-bottom:16px;border-radius:8px;border-top:1px solid #e2e8f0;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+.diff-row .num{font-size:36px;font-weight:900;color:#f38020;min-width:60px}
+.diff-row .txt h4{color:#0a2540;font-size:18px;margin-bottom:6px}
+.diff-row .txt p{color:#64748b;font-size:14px;line-height:1.5}
+</style></head><body>
+<div class="nav">VULNSUITE · EXECUTIVE BRIEFING · CONFIDENTIAL</div>
+
+<section class="slide" data-num="01 / COVER">
+<div class="hero-logo">🛡️</div>
+<span class="tag">INTRODUCING</span>
+<h1>VulnSuite</h1>
+<p class="subtitle">A BFSI-native, multi-tool, risk-prioritized cybersecurity vulnerability analysis platform spanning code, IaC, runtime, perimeter, API, supply chain, and multi-cloud — Azure + AWS + GCP. Built for Indian banking. Aligned to RBI CSF and CERT-In from the ground up.</p>
+<div class="footer-note">CONFIDENTIAL — INTERNAL USE ONLY · Prepared for CISO Review</div>
+</section>
+
+<section class="slide" data-num="02 / WHAT IT ADDRESSES">
+<span class="tag">WHAT VULNSUITE ADDRESSES</span>
+<h2>Four gaps in <span class="accent">conventional vulnerability scanning.</span></h2>
+<div class="grid grid-4">
+<div class="card"><h3>Tools, no risk lens</h3><p style="color:#334155;font-size:14px">Scanners produce raw findings without business-risk prioritization. Severity ≠ exploitability ≠ blast radius.</p></div>
+<div class="card"><h3>Findings, no citations</h3><p style="color:#334155;font-size:14px">Auditors expect RBI CSF / CERT-In / CIS / NIST traceability per finding. Most scanners stop at CVE IDs.</p></div>
+<div class="card"><h3>Cloud, no parity</h3><p style="color:#334155;font-size:14px">Azure, AWS, and GCP each carry their own console, severity scale, and compliance pack. No unified view.</p></div>
+<div class="card"><h3>Code, no trust chain</h3><p style="color:#334155;font-size:14px">No continuity from SBOM → signature → SLSA attestation → VEX. Supply-chain risk lives in slides, not pipelines.</p></div>
+</div>
+<p class="subtitle" style="margin-top:48px">VulnSuite addresses all four in a single platform, with passive-only enforcement and air-gap support as defaults — engineered for BFSI from the schema up.</p>
+</section>
+
+<section class="slide" data-num="03 / THE SOLUTION">
+<span class="tag">THE SOLUTION</span>
+<h2>One platform. <span class="accent">One risk lens.</span> One compliance story.</h2>
+<div class="grid grid-3">
+<div class="card"><h3>🎯 Risk-Prioritized</h3><p style="color:#334155;font-size:14px">CVSS × EPSS × criticality × exposure collapses raw scanner output into a focused P0–P4 queue.</p></div>
+<div class="card"><h3>🏛️ Compliance-Native</h3><p style="color:#334155;font-size:14px">RBI CSF, CERT-In, ISO 27001, CIS, NIST citations embedded in every finding.</p></div>
+<div class="card"><h3>🔒 Passive & Air-Gap Ready</h3><p style="color:#334155;font-size:14px">No exploitation. Offline modes for every network dependency. BFSI audit-safe.</p></div>
+</div>
+</section>
+
+<section class="slide" data-num="04 / RISK ENGINE">
+<span class="tag">THE RISK ENGINE</span>
+<h2>Math that <span class="accent">matches business risk.</span></h2>
+<div class="formula">risk = CVSS × EPSS × (criticality/5) × exposure</div>
+<div class="grid grid-4">
+<div class="card"><h3>CVSS</h3><p style="color:#64748b;font-size:13px">0–10 · Technical severity from NVD/vendor</p></div>
+<div class="card"><h3>EPSS</h3><p style="color:#64748b;font-size:13px">0–1 · Exploit probability (FIRST.org, Redis-cached)</p></div>
+<div class="card"><h3>Criticality</h3><p style="color:#64748b;font-size:13px">1–5 · Business tier from asset tags</p></div>
+<div class="card"><h3>Exposure</h3><p style="color:#64748b;font-size:13px">Internet 1.0 · Internal 0.6 · Isolated 0.3</p></div>
+</div>
+<div class="bucket"><div class="p0">P0 ≥ 7.0<br><small>CERT-In clock</small></div><div class="p1">P1 ≥ 4.5<br><small>7-day SLA</small></div><div class="p2">P2 ≥ 2.0<br><small>30-day SLA</small></div><div class="p3">P3 ≥ 0.5<br><small>Backlog</small></div><div class="p4">P4 &lt; 0.5<br><small>Info</small></div></div>
+</section>
+
+<section class="slide" data-num="05 / SCANNER COVERAGE">
+<span class="tag">12 MODULES · 1 SCHEMA · 1 RISK LENS</span>
+<h2>Belt-and-braces <span class="accent">by design.</span></h2>
+<table><tr><th>Module</th><th>Tools</th><th>What It Catches</th></tr>
+<tr><td><b>SCA</b></td><td>Trivy · pip-audit · OSV-Scanner</td><td>CVEs in dependencies, triple-corroborated across NVD/PyPA/OSV.dev</td></tr>
+<tr><td><b>Secrets</b></td><td>gitleaks · TruffleHog</td><td>Hardcoded credentials with live verification against AWS/GCP/Azure/Slack</td></tr>
+<tr><td><b>SAST</b></td><td>Semgrep · Bandit</td><td>OWASP Top 10 + Python crypto pitfalls (MD5, pickle, yaml.load, shell=True)</td></tr>
+<tr><td><b>Network</b></td><td>nmap (passive) · testssl.sh</td><td>Exposed services + TLS hygiene mapped to RBI CSF Annex-I clauses</td></tr>
+<tr><td><b>Cloud</b></td><td>Prowler Azure · Prowler AWS · Prowler GCP</td><td>CIS + ISO 27001 + NIST 800-53 misconfigurations across all three hyperscalers</td></tr>
+<tr><td><b>Container</b></td><td>Trivy image · Dockle</td><td>Image CVEs + CIS Docker hardening violations</td></tr>
+<tr><td><b>IaC</b></td><td>Checkov · Trivy config</td><td>Terraform · Bicep · Helm · K8s manifests · OpenAPI; corroborated misconfigurations</td></tr>
+<tr><td><b>Kubernetes</b></td><td>Kubescape · kubectl + Trivy</td><td>NSA + CIS posture <i>and</i> every running workload image, tied to the same asset</td></tr>
+<tr><td><b>ASM</b></td><td>Subfinder · httpx · TestSSL</td><td>Passive subdomain enumeration + service fingerprint + TLS posture on what attackers see</td></tr>
+<tr><td><b>API Security</b></td><td>Nuclei · OWASP ZAP (gated)</td><td>OpenAPI-driven DAST with triple-gated allowlist; templates + OWASP API Top 10</td></tr>
+<tr><td><b>Supply Chain</b></td><td>Syft · Cosign · VEX</td><td>SBOM (CycloneDX) · keyless signature + SLSA attestation verify · CycloneDX VEX + OpenVEX</td></tr>
+<tr><td><b>Discovery</b></td><td>Azure RG · AWS CLI · gcloud · Subfinder · kubectl</td><td>Auto-inventory across Azure, AWS, GCP, public domains, and K8s clusters</td></tr></table>
+</section>
+
+<section class="slide" data-num="06 / SCA MODULE">
+<span class="tag">MODULE 01 — SCA</span>
+<h2>Software Composition Analysis</h2>
+<div class="grid grid-3">
+<div class="card"><h3>Trivy</h3><ul><li>Broad multi-ecosystem</li><li>NVD-first CVSS</li><li>Container + filesystem</li><li>Offline DB support</li><li>15-min hard timeout</li></ul></div>
+<div class="card"><h3>pip-audit</h3><ul><li>PyPA Advisory DB</li><li>requirements.txt / pyproject / venv</li><li>Unpatched CVEs → HIGH</li><li>Offline cache mode</li></ul></div>
+<div class="card"><h3>OSV-Scanner</h3><ul><li>Google OSV.dev</li><li>npm · Maven · crates · Go</li><li>Often fresher than NVD</li><li>Walks nested fix events</li></ul></div>
+</div>
+<p class="subtitle" style="margin-top:32px">Dedup keyed on <code style="color:#c2410c">(asset, cve, pkg, version)</code>. Cross-tool corroboration trail stored in every finding for audit defensibility.</p>
+</section>
+
+<section class="slide" data-num="07 / SECRETS + SAST">
+<span class="tag">MODULES 02 & 03 — SECRETS & SAST</span>
+<h2>Credentials & code quality</h2>
+<div class="grid grid-2">
+<div class="card"><h3>🔑 gitleaks</h3><ul><li>Regex-based, redact by default</li><li>Commit + author captured for blame</li><li>Severity floor: HIGH</li><li>CWE-798 mapped</li><li>Cloud keys auto → CRITICAL</li></ul></div>
+<div class="card"><h3>🔑 TruffleHog</h3><ul><li>LIVE credential verification</li><li>Verified hits → CRITICAL</li><li>CERT-In language in remediation</li><li>Raw values NEVER persisted</li><li>Opt-in egress control</li></ul></div>
+<div class="card"><h3>🧪 Semgrep</h3><ul><li>Multi-language SAST</li><li>default + security-audit + OWASP + secrets packs</li><li>--metrics off (BFSI mandate)</li><li>HIGH+HIGH impact/confidence → CRITICAL</li><li>Offline rules dir for air-gap</li></ul></div>
+<div class="card"><h3>🧪 Bandit</h3><ul><li>Python AST-driven linter</li><li>3×3 severity × confidence matrix</li><li>Curated fix for MD5, DES, ECB, pickle, yaml.load, shell=True, SQL concat</li><li>Maps to RBI CSF 6.14 SDLC</li></ul></div>
+</div>
+</section>
+
+<section class="slide" data-num="08 / NETWORK">
+<span class="tag">MODULE 04 — NETWORK (PASSIVE)</span>
+<h2>Services & TLS hygiene</h2>
+<div class="grid grid-2">
+<div class="card"><h3>🔍 nmap (passive)</h3><ul><li>-sT -sV only, no SYN, no vuln scripts</li><li>T2 polite timing ceiling enforced at __init__</li><li>Refuses public CIDRs unless opted in</li><li>BFSI severity table: Telnet/rsh → CRITICAL, FTP/RDP/Mongo/Redis → HIGH</li><li>CPE extraction for downstream CVE enrichment</li></ul></div>
+<div class="card"><h3>🔐 testssl.sh</h3><ul><li>Protocols, ciphers, certs, HSTS, TLS vulns</li><li>Direct RBI Annex-I clause on every finding (6.2/6.3/6.4/6.5)</li><li>Heartbleed, POODLE, ROBOT, FREAK, LOGJAM, DROWN, BEAST, LUCKY13</li><li>Remediation names Azure App Gateway / nginx / HAProxy by product</li></ul></div>
+</div>
+</section>
+
+<section class="slide" data-num="09 / CLOUD + CONTAINER + DISCOVERY">
+<span class="tag">MODULES 05–07 — CLOUD · CONTAINER · DISCOVERY</span>
+<h2>Multi-cloud posture · Azure + AWS + GCP</h2>
+<div class="grid grid-3">
+<div class="card"><h3>☁️ Prowler — Azure · AWS · GCP</h3><ul><li>Read-only credentials only</li><li>CIS + ISO 27001 + NIST 800-53</li><li>Account / project scoping passed through</li><li>OCSF JSON output, single Module.CLOUD shape</li><li>Failing checks only — no noise</li></ul></div>
+<div class="card"><h3>📦 Dockle</h3><ul><li>CIS Docker Benchmark</li><li>Non-root USER enforcement</li><li>Pinned tags, HEALTHCHECK</li><li>Content Trust, setuid bits</li><li>Runtime secrets check</li></ul></div>
+<div class="card"><h3>🗺️ Multi-cloud Inventory</h3><ul><li>Azure Resource Graph (KQL)</li><li>AWS CLI: ELBv2 + Elastic IPs</li><li>gcloud asset search-all-resources</li><li>Tag-based criticality (prod→5, dev→1)</li><li>Public-facing type → exposure INTERNET</li><li>Idempotent upsert, nightly via Celery Beat</li></ul></div>
+</div>
+</section>
+
+<section class="slide" data-num="10 / IAC + KUBERNETES">
+<span class="tag">MODULES 08 & 09 — IAC · KUBERNETES</span>
+<h2>Shift left. <span class="accent">Land safe.</span></h2>
+<div class="grid grid-2">
+<div class="card"><h3>📐 Checkov</h3><ul><li>Terraform · Terraform plan JSON · Bicep · Helm · K8s manifests · Kustomize · OpenAPI</li><li>Policy packs across CIS, NIST, PCI-DSS, SOC 2, ISO</li><li>--download-external-modules false by default (air-gap safe)</li><li>RBI CSF 6.4 secure config + 6.14 SDLC</li></ul></div>
+<div class="card"><h3>📐 Trivy config</h3><ul><li>AVD-ID-keyed misconfiguration corroboration</li><li>Pairs with Checkov: only agreed misconfigs rise above informational</li><li>Same triple-corroboration pattern auditors expect for SCA, now applied to IaC</li></ul></div>
+<div class="card"><h3>☸️ Kubescape</h3><ul><li>NSA + CIS Kubernetes benchmarks</li><li>Live cluster mode with namespace exclusions</li><li>Per-control YAML evidence for auditors</li><li>RBI CSF 6.3 + 6.4 + 6.13</li></ul></div>
+<div class="card"><h3>☸️ K8s Inventory + Trivy</h3><ul><li>kubectl get deploy/sts/ds/pod -A → image extraction</li><li>Every running image fed back through Trivy under Module.KUBERNETES</li><li>Cluster posture + workload CVEs land on the same asset</li><li>"What's running" matches "what we scanned"</li></ul></div>
+</div>
+</section>
+
+<section class="slide" data-num="11 / EXTERNAL ATTACK SURFACE">
+<span class="tag">MODULE 10 — ASM</span>
+<h2>What attackers <span class="accent">see of us.</span></h2>
+<div class="grid grid-3">
+<div class="card"><h3>🌐 Subfinder</h3><ul><li>Passive sources only (Censys, VT, AlienVault, etc.)</li><li>Zero probing traffic to our perimeter</li><li>Per-root cap (default 500)</li><li>Each subdomain becomes a DOMAIN asset</li></ul></div>
+<div class="card"><h3>🌐 httpx</h3><ul><li>HTTP/HTTPS service fingerprint</li><li>Status, title, web server, tech stack, TLS</li><li>HTTP on prod ports → MEDIUM (BFSI baseline forbids cleartext)</li><li>Feeds asset enrichment, not just a scan</li></ul></div>
+<div class="card"><h3>🔐 TestSSL + nmap (opt-in)</h3><ul><li>Every discovered host → automatic TLS posture run</li><li>nmap validation gated behind explicit opt-in (vetted target lists only)</li><li>RBI Annex-I 6.1 inventory + 6.2 crypto + 6.4 hardening</li></ul></div>
+</div>
+<p class="subtitle" style="margin-top:32px">Closes the "shadow IT" gap. The assets the inventory misses, the perimeter still tells us about.</p>
+</section>
+
+<section class="slide" data-num="12 / API SECURITY + GATED DAST">
+<span class="tag">MODULE 11 — API SECURITY</span>
+<h2>Active testing. <span class="accent">Failsafe by design.</span></h2>
+<div class="grid grid-2">
+<div class="card"><h3>⚡ Nuclei</h3><ul><li>Community + custom YAML templates</li><li>Severity floor configurable (default <code style="color:#c2410c">medium</code>)</li><li>CVE-tagged hits inherit EPSS — proper exploitability scoring</li><li>OWASP API Top 10 + product-specific rule packs</li></ul></div>
+<div class="card"><h3>🕷️ OWASP ZAP Automation Framework</h3><ul><li>YAML plan: ingest OpenAPI → spider → passive wait → optional active scan</li><li>Reports normalized into the same Finding schema</li><li>Per-tenant timeout cap (default 20 min)</li><li>Both passive (baseline) and active modes available</li></ul></div>
+</div>
+<div class="card" style="margin-top:24px;border-color:#f38020"><h3 style="color:#f38020">🛡️ DAST Triple-Gating — production cannot be hit by accident</h3><ul>
+<li><b>Gate 1 · dast_mode flag</b> — must be <code style="color:#c2410c">baseline</code> or <code style="color:#c2410c">active</code> on the request; default is <code style="color:#c2410c">off</code></li>
+<li><b>Gate 2 · FQDN allowlist</b> — every target URL must match <code style="color:#c2410c">VULNSUITE_APISEC_DAST_ALLOWLIST</code>; enforced both at the API and inside the Celery task</li>
+<li><b>Gate 3 · Active opt-in</b> — <code style="color:#c2410c">dast_mode=active</code> additionally requires <code style="color:#c2410c">VULNSUITE_APISEC_ALLOW_ACTIVE_SCAN=true</code></li>
+<li><b>Air-gap</b> — offline mode emits a graceful skip, never silently runs without policy</li>
+</ul></div>
+</section>
+
+<section class="slide" data-num="13 / SUPPLY CHAIN">
+<span class="tag">MODULE 12 — SUPPLY CHAIN</span>
+<h2>SBOM. Signed. <span class="accent">Attested. Suppressed.</span></h2>
+<div class="grid grid-4">
+<div class="card"><h3>📋 Syft (SBOM)</h3><ul><li>CycloneDX SBOM emit and ingest</li><li>Components missing PURL/version → flagged (incomplete identity = unverifiable provenance)</li><li>Every emitted SBOM re-scanned by Trivy in <code style="color:#c2410c">sbom</code> mode</li></ul></div>
+<div class="card"><h3>🔏 Cosign — Signatures</h3><ul><li>Keyless: Sigstore identity + OIDC issuer policy</li><li>Air-gap fallback: PEM key</li><li>Missing signature → HIGH</li><li>Wired through SupplyChainSettings</li></ul></div>
+<div class="card"><h3>📜 Cosign — Attestations</h3><ul><li><code style="color:#c2410c">cosign verify-attestation</code> with predicate type</li><li>SLSA provenance · SBOM · VEX</li><li>Missing required attestation → HIGH</li><li>RBI CSF 6.14 SDLC trust chain</li></ul></div>
+<div class="card"><h3>📝 VEX (CycloneDX + OpenVEX)</h3><ul><li>Auto-detects format per file</li><li><code style="color:#c2410c">not_affected</code> / <code style="color:#c2410c">resolved</code> / <code style="color:#c2410c">fixed</code> → INFO/P4 downgrade</li><li>Applied as orchestrator post-processor</li><li>Original VEX state preserved on evidence for audit</li></ul></div>
+</div>
+<p class="subtitle" style="margin-top:32px">"This dependency is in our SBOM, signed by our build pipeline, the provenance attestation matches, and where we accept residual risk it's a documented VEX statement — not a forgotten ticket."</p>
+</section>
+
+<section class="slide" data-num="14 / COMPLIANCE">
+<span class="tag">COMPLIANCE-NATIVE</span>
+<h2>Every finding carries a <span class="accent">citation.</span></h2>
+<div class="grid grid-2">
+<div class="card"><h3>🏛️ RBI Cyber Security Framework</h3><ul><li>6.1 Asset inventory</li><li>6.2 Crypto & TLS</li><li>6.3 Patch management</li><li>6.4 Secure configuration</li><li>6.5 Certificate & PKI</li><li>6.13 Cloud security</li><li>6.14 SDLC</li><li>6.15 Secrets management</li><li>6.16 Database security</li></ul></div>
+<div class="card"><h3>🚨 CERT-In Directions 28 Apr 2022</h3><ul><li>6-hour reporting window auto-tracked</li><li>JSON incident packet on every P0</li><li>SHA-256 integrity hash</li><li>180-day log retention compatible</li><li>Upload-ready for incident portal</li><li>Never auto-transmitted (human gate)</li></ul></div>
+<div class="card"><h3>✅ Additional Frameworks</h3><ul><li>ISO 27001:2013 Annex A</li><li>NIST 800-53 Rev 5</li><li>CIS Azure 2.0 Benchmark</li><li>CIS Docker Benchmark</li><li>OWASP Top 10</li><li>PCI-DSS (opt-in per tenant)</li></ul></div>
+<div class="card"><h3>📊 Audit Defensibility</h3><ul><li>Tool corroboration trail</li><li>Regulatory citation per finding</li><li>SHA-256 hash on all PDFs</li><li>Operator + timestamp on all actions</li><li>Tenant-scoped audit log</li><li>Tamper-evident reports</li></ul></div>
+</div>
+</section>
+
+<section class="slide" data-num="15 / ARCHITECTURE">
+<span class="tag">ARCHITECTURE</span>
+<h2>Productizable <span class="accent">from day one.</span></h2>
+<div class="grid grid-4">
+<div class="card"><h3>⚡ FastAPI</h3><ul><li>OIDC + JWT</li><li>4-role RBAC</li><li>Tenant-scoped routes</li><li>OpenAPI spec</li></ul></div>
+<div class="card"><h3>🔧 Celery Workers</h3><ul><li>Redis broker</li><li>4 dedicated queues</li><li>Beat scheduler</li><li>Retry discipline</li></ul></div>
+<div class="card"><h3>🗄️ PostgreSQL 16</h3><ul><li>Row-Level Security</li><li>Tenant kernel isolation</li><li>Composite indexes</li><li>DuckDB cold archive</li></ul></div>
+<div class="card"><h3>📊 Streamlit</h3><ul><li>CISO KPI strip</li><li>CERT-In countdown</li><li>MTTR trends</li><li>Compliance tabs</li></ul></div>
+</div>
+</section>
+
+<section class="slide" data-num="16 / DIFFERENTIATORS">
+<span class="tag">WHY VULNSUITE</span>
+<h2>What makes this <span class="accent">different.</span></h2>
+<div class="diff-row"><div class="num">01</div><div class="txt"><h4>BFSI-native, not BFSI-bolted-on</h4><p>RBI CSF clauses (6.1, 6.2, 6.3, 6.4, 6.5, 6.13, 6.14, 6.15, 6.16) and CERT-In 6-hour timing are first-class data model concerns across all 12 modules — not post-processing hacks.</p></div></div>
+<div class="diff-row"><div class="num">02</div><div class="txt"><h4>Multi-tool corroboration end-to-end</h4><p>Triple-corroborated SCA, two-tool secrets, two-tool SAST, two-tool IaC, signature + attestation supply chain — the belt-and-braces pattern auditors explicitly look for, applied uniformly.</p></div></div>
+<div class="diff-row"><div class="num">03</div><div class="txt"><h4>Active testing without production risk</h4><p>DAST is triple-gated (mode flag + FQDN allowlist + active opt-in), enforced both at API and worker. Active scanning of production cannot happen by accident.</p></div></div>
+<div class="diff-row"><div class="num">04</div><div class="txt"><h4>Supply chain trust as a signal, not a slogan</h4><p>SBOM emit/ingest, keyless Sigstore signature verify, SLSA provenance attestation enforcement, and CycloneDX-VEX + OpenVEX downgrade — applied as a post-processor so VEX is the documented last word.</p></div></div>
+<div class="diff-row"><div class="num">05</div><div class="txt"><h4>Multi-cloud parity, single risk lens</h4><p>Azure + AWS + GCP posture all flow into the same Module.CLOUD shape. Account/project scoping is enforced — no accidental org walks.</p></div></div>
+<div class="diff-row"><div class="num">06</div><div class="txt"><h4>Air-gap is first-class</h4><p>Every collector has an offline path or graceful skip. Cosign falls back to PEM key when Sigstore is unreachable. Zero telemetry egress by default.</p></div></div>
+<div class="diff-row"><div class="num">07</div><div class="txt"><h4>Findings are actionable</h4><p>Curated, library-specific remediation ships with every finding from Bandit, Dockle, TestSSL, TruffleHog, Cosign. Developers act without Googling.</p></div></div>
+</section>
+
+<section class="slide" data-num="17 / ASK">
+<span class="tag">NEXT STEPS</span>
+<h2>What we <span class="accent">need from you.</span></h2>
+<div class="grid grid-2">
+<div class="card"><h3>01 · Architectural Review</h3><p style="color:#334155;font-size:14px">Your sign-off on the design and reference implementation — particular attention to DAST gating, Cosign keyless policy, and SLSA attestation enforcement.</p></div>
+<div class="card"><h3>02 · 30-Day Pilot</h3><p style="color:#334155;font-size:14px">Internal pilot covering our Azure infra, repos, container registry, Terraform/Bicep modules, two non-prod AKS clusters, public root domains (passive only), one AWS sandbox, one GCP sandbox.</p></div>
+<div class="card"><h3>03 · Platform-Engineering Owner</h3><p style="color:#334155;font-size:14px">One CI/CD owner to wire Cosign signing into our build pipelines so supply-chain checks can move from "report" to "block" in production.</p></div>
+<div class="card"><h3>04 · Strategic Direction</h3><p style="color:#334155;font-size:14px">Helm + Alembic for SaaS readiness, SIEM connectors (Splunk/Sentinel) for SOC integration, or automated remediation playbooks — which next?</p></div>
+</div>
+<div class="footer-note">Thank you. Questions welcome.<br>CONFIDENTIAL — INTERNAL USE ONLY · Do not forward without CISO approval</div>
+</section>
+</body></html>

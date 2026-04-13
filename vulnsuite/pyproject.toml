@@ -1,0 +1,158 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vulnsuite"
+version = "0.1.0"
+description = "Cybersecurity vulnerability analysis suite (BFSI-tuned, multi-tool, risk-prioritized)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "VulnSuite Team" }]
+keywords = ["security", "vulnerability", "sast", "sca", "cspm", "bfsi", "rbi", "cert-in"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+]
+
+dependencies = [
+    # Core
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "python-dateutil>=2.9",
+    "PyYAML>=6.0",
+
+    # Database
+    "sqlalchemy[asyncio]>=2.0.29",
+    "asyncpg>=0.29",
+    "psycopg2-binary>=2.9",        # sync driver for Streamlit
+    "alembic>=1.13",
+
+    # HTTP / EPSS
+    "httpx>=0.27",
+    "redis>=5.0",
+
+    # API layer
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-jose[cryptography]>=3.3",
+    "python-multipart>=0.0.9",
+
+    # Workers
+    "celery[redis]>=5.3",
+
+    # Reporting
+    "jinja2>=3.1",
+    "weasyprint>=61.0",
+
+    # Dashboard
+    "streamlit>=1.33",
+    "pandas>=2.2",
+
+    # Azure SDK (cloud + discovery)
+    "azure-identity>=1.16",
+    "azure-mgmt-resourcegraph>=8.0",
+    "azure-mgmt-subscription>=3.1",
+    "azure-keyvault-secrets>=4.8",
+
+    # Scanners installed as Python packages
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+    "semgrep>=1.70",
+
+    # Observability
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "mypy>=1.9",
+    "ruff>=0.4",
+    "black>=24.3",
+    "types-redis",
+    "types-python-dateutil",
+]
+
+[project.scripts]
+vulnsuite = "vulnsuite.cli:main"
+
+[project.urls]
+Documentation = "https://internal.docs.vulnsuite.local"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vulnsuite*"]
+exclude = ["tests*", "deploy*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["migrations"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "S",             # bandit-style security
+    "UP",            # pyupgrade
+    "ASYNC",         # async issues
+    "RUF",
+]
+ignore = [
+    "S101",          # assert used (we use it in tests)
+    "S603", "S607",  # subprocess without shell (we do this intentionally in collectors)
+    "E501",          # line length handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+ignore_missing_imports = true        # many security tools lack type stubs
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --cov=vulnsuite --cov-report=term-missing"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires external scanner binaries",
+    "azure: requires Azure credentials",
+    "aws: requires AWS credentials",
+    "gcp: requires GCP credentials",
+    "kubernetes: requires Kubernetes access",
+    "slow: long-running tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["vulnsuite"]
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
