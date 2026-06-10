@@ -426,3 +426,75 @@ class TestChainVerification:
         by_id = {str(f.finding_id): f for f in out}
         assert len(by_id[str(a.finding_id)].evidence.raw["ai_attack_chains"]) == 1
         assert calls["n"] == 2
+
+
+# ---------- AI signals surfaced end-to-end ----------
+
+class TestSurfacing:
+    def _enriched(self, make_finding):
+        return make_finding(
+            Module.SCA,
+            risk_bucket="P1",
+            cve=["CVE-2024-3094"],
+            evidence=Evidence(
+                raw={
+                    "ai_triage": {"fp_likelihood": 0.1, "exploitability": "high",
+                                  "suggested_status": "triaged"},
+                    "ai_threat_intel": {"actively_exploited": True, "kev_listed": True,
+                                        "verdicts": []},
+                    "ai_suggested_bucket": "P0",
+                    "ai_attack_chains": [
+                        {"finding_ids": ["x"], "narrative": "n", "likelihood": 0.5,
+                         "composite_severity": "critical", "suggested_bucket": "P0",
+                         "kill_chain_stage": "initial-access"}
+                    ],
+                }
+            ),
+        )
+
+    def test_siem_envelope_carries_ai_signals(self, make_finding):
+        from vulnsuite.integrations.siem import normalize_for_siem
+
+        doc = normalize_for_siem(self._enriched(make_finding), "Tenant Bank")
+        assert doc["ai_actively_exploited"] is True
+        assert doc["ai_kev_listed"] is True
+        assert doc["ai_fp_likelihood"] == 0.1
+        assert doc["ai_suggested_bucket"] == "P0"
+        assert doc["ai_attack_chain_count"] == 1
+
+    def test_siem_envelope_defaults_without_ai(self, make_finding):
+        from vulnsuite.integrations.siem import normalize_for_siem
+
+        doc = normalize_for_siem(make_finding(Module.SAST), "Tenant Bank")
+        assert doc["ai_actively_exploited"] is False
+        assert doc["ai_fp_likelihood"] is None
+        assert doc["ai_attack_chain_count"] == 0
+
+    def test_pdf_live_threat_badges(self, make_finding):
+        from vulnsuite.reporting.pdf_report import PDFReportGenerator
+
+        f = self._enriched(make_finding)
+        plain = make_finding(Module.SAST)
+        badges = PDFReportGenerator._live_threats([f, plain])
+        assert badges[str(f.finding_id)] == "EXPLOITED IN WILD + CISA KEV"
+        assert str(plain.finding_id) not in badges
+
+    def test_pdf_attack_chains_deduped_and_resolved(self, make_finding):
+        from vulnsuite.reporting.pdf_report import PDFReportGenerator
+
+        a = make_finding(Module.SECRETS, title="Leaked key")
+        b = make_finding(Module.ASM, title="Exposed service")
+        chain = {
+            "finding_ids": [str(a.finding_id), str(b.finding_id)],
+            "narrative": "Key unlocks service.",
+            "likelihood": 0.6,
+            "composite_severity": "critical",
+            "suggested_bucket": "P0",
+            "kill_chain_stage": "initial-access",
+        }
+        for f in (a, b):
+            f.evidence.raw = {"ai_attack_chains": [dict(chain)]}
+
+        chains = PDFReportGenerator()._attack_chains([a, b])
+        assert len(chains) == 1                       # same chain on both members -> one entry
+        assert [s["title"] for s in chains[0]["steps"]] == ["Leaked key", "Exposed service"]

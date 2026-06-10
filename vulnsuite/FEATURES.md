@@ -195,6 +195,17 @@ to opt in) and force-disabled in air-gap mode regardless of flags.
 **adversarial verifier** that refutes weak chains) → map → suggest →
 evidence updates written back under RLS.
 
+**Surfaced end-to-end** — AI signals are first-class in every consumer:
+- **Dashboard**: "Exploited in Wild" KPI + banner, AI Insights tab (live
+  threat intel, verified attack chains, suggested escalations, likely
+  false positives, remediation plans), threat flags on Top Risks.
+- **SIEM envelope**: flat `ai_*` scalars (`ai_actively_exploited`,
+  `ai_kev_listed`, `ai_fp_likelihood`, `ai_suggested_bucket`,
+  `ai_attack_chain_count`) so SOC rules can key on them directly.
+- **PDF report**: Live Threat badges in Top 10 Risks + a Confirmed
+  Attack Chains section with step-by-step paths.
+- **API**: `GET /api/v1/findings` returns the AI fields per finding.
+
 **Fable 5 capabilities in use:** adaptive thinking; `effort` tiers up to
 `max`; task budgets (beta) on the deep correlation call; structured
 outputs everywhere; Batches API at 50% price; prompt-cached frozen

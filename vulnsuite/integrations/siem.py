@@ -75,6 +75,16 @@ def normalize_for_siem(f: Finding, tenant_name: str) -> dict:
         "cef_severity": int(f.risk_score),
         # Signal for CERT-In reportability — Sentinel/Splunk alerts can key on this
         "certin_reportable": f.risk_bucket == "P0",
+        # ---- AI enrichment signals (Claude Fable 5, Phase 3) ----
+        # Flat scalars so SOC rules can key on them directly, e.g.
+        # `ai_actively_exploited:true AND risk_bucket:P1` as an escalation rule.
+        "ai_fp_likelihood": (ev.get("ai_triage") or {}).get("fp_likelihood"),
+        "ai_exploitability": (ev.get("ai_triage") or {}).get("exploitability"),
+        "ai_suggested_status": (ev.get("ai_triage") or {}).get("suggested_status"),
+        "ai_actively_exploited": bool((ev.get("ai_threat_intel") or {}).get("actively_exploited")),
+        "ai_kev_listed": bool((ev.get("ai_threat_intel") or {}).get("kev_listed")),
+        "ai_attack_chain_count": len(ev.get("ai_attack_chains") or []),
+        "ai_suggested_bucket": ev.get("ai_suggested_bucket"),
     }
 
 

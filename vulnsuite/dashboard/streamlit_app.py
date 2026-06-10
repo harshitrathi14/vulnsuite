@@ -1,6 +1,7 @@
 """VulnSuite - Streamlit CISO dashboard."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -26,6 +27,19 @@ def _set_tenant(conn, tenant_id: str) -> None:
     conn.execute(text("SET app.tenant_id = :t"), {"t": tenant_id})
 
 
+def _evidence_raw(evidence) -> dict:
+    """evidence column -> raw dict (handles jsonb dicts and JSON strings)."""
+    if isinstance(evidence, str):
+        try:
+            evidence = json.loads(evidence)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(evidence, dict):
+        return {}
+    raw = evidence.get("raw")
+    return raw if isinstance(raw, dict) else {}
+
+
 @st.cache_data(ttl=60)
 def load_findings(tenant_id: str) -> pd.DataFrame:
     with engine.connect() as conn:
@@ -34,13 +48,29 @@ def load_findings(tenant_id: str) -> pd.DataFrame:
             text("""
                 SELECT finding_id, tool, module, title, severity,
                        cvss_base, epss, risk_score, risk_bucket,
-                       status, first_seen, last_seen, cve
+                       status, first_seen, last_seen, cve, evidence
                 FROM findings
                 ORDER BY risk_score DESC
             """),
             conn,
         )
-    return df
+    if df.empty:
+        return df
+    # Flatten the Claude Fable 5 enrichment (Phase 3) into columns.
+    raw = df["evidence"].map(_evidence_raw)
+    df["ai_fp_likelihood"] = raw.map(lambda r: (r.get("ai_triage") or {}).get("fp_likelihood"))
+    df["ai_exploitability"] = raw.map(lambda r: (r.get("ai_triage") or {}).get("exploitability"))
+    df["ai_reasoning"] = raw.map(lambda r: (r.get("ai_triage") or {}).get("reasoning"))
+    df["actively_exploited"] = raw.map(
+        lambda r: bool((r.get("ai_threat_intel") or {}).get("actively_exploited"))
+    )
+    df["kev_listed"] = raw.map(
+        lambda r: bool((r.get("ai_threat_intel") or {}).get("kev_listed"))
+    )
+    df["ai_suggested_bucket"] = raw.map(lambda r: r.get("ai_suggested_bucket"))
+    df["attack_chains"] = raw.map(lambda r: r.get("ai_attack_chains") or [])
+    df["ai_remediation"] = raw.map(lambda r: (r.get("ai_remediation") or {}).get("summary"))
+    return df.drop(columns=["evidence"])
 
 
 @st.cache_data(ttl=60)
@@ -80,13 +110,24 @@ except Exception as e:
 # ---------- KPI strip ----------
 
 buckets = df["risk_bucket"].value_counts().to_dict() if not df.empty else {}
-col1, col2, col3, col4, col5, col6 = st.columns(6)
+exploited_count = int(df["actively_exploited"].sum()) if not df.empty else 0
+col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 col1.metric("P0 Critical", buckets.get("P0", 0))
 col2.metric("P1 High", buckets.get("P1", 0))
 col3.metric("P2 Medium", buckets.get("P2", 0))
 col4.metric("P3 Low", buckets.get("P3", 0))
 col5.metric("P4 Info", buckets.get("P4", 0))
-col6.metric("Assets", len(assets_df))
+col6.metric("🔥 Exploited in Wild", exploited_count)
+col7.metric("Assets", len(assets_df))
+
+# ---------- live-threat banner ----------
+
+if exploited_count > 0:
+    st.error(
+        f"🔥 **{exploited_count} finding(s) involve CVEs with ACTIVE in-the-wild "
+        f"exploitation** (live threat intel via Claude Fable 5). Patch these first — "
+        f"attackers are already using them."
+    )
 
 # ---------- CERT-In clock ----------
 
@@ -101,8 +142,8 @@ st.markdown("---")
 
 # ---------- tabs ----------
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📊 Risk Overview", "🔝 Top Risks", "🏷️ Modules", "🏛️ Compliance"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📊 Risk Overview", "🔝 Top Risks", "🏷️ Modules", "🏛️ Compliance", "🤖 AI Insights"]
 )
 
 with tab1:
@@ -127,9 +168,9 @@ with tab2:
     st.subheader("Top 25 Risks")
     if not df.empty:
         top = df.head(25)[
-            ["risk_bucket", "risk_score", "tool", "module",
-             "title", "severity", "cve"]
-        ]
+            ["risk_bucket", "risk_score", "actively_exploited", "kev_listed",
+             "tool", "module", "title", "severity", "cve"]
+        ].rename(columns={"actively_exploited": "🔥 exploited", "kev_listed": "KEV"})
         st.dataframe(top, use_container_width=True)
 
 with tab3:
@@ -184,6 +225,92 @@ with tab4:
             )
             st.dataframe(
                 p0[["title", "tool", "risk_score", "cve", "first_seen"]],
+                use_container_width=True,
+            )
+
+with tab5:
+    st.caption(
+        "Enrichment by Claude Fable 5 — advisory signals for analyst review. "
+        "Deterministic risk scores remain authoritative."
+    )
+    if df.empty:
+        st.info("No findings loaded.")
+    else:
+        # ---- live threat intel ----
+        st.subheader("🔥 Live Threat Intelligence")
+        hot = df[df["actively_exploited"] | df["kev_listed"]]
+        if hot.empty:
+            st.success("No scanned CVEs currently show in-the-wild exploitation or KEV listing.")
+        else:
+            st.dataframe(
+                hot[["risk_bucket", "title", "cve", "actively_exploited",
+                     "kev_listed", "risk_score", "status"]]
+                .rename(columns={"actively_exploited": "exploited now", "kev_listed": "CISA KEV"}),
+                use_container_width=True,
+            )
+
+        # ---- attack chains ----
+        st.subheader("⛓️ Verified Attack Chains")
+        seen_chains: set[tuple] = set()
+        chains = []
+        for chain_list in df["attack_chains"]:
+            for c in chain_list:
+                if not isinstance(c, dict):
+                    continue
+                key = (tuple(c.get("finding_ids", [])), c.get("narrative", ""))
+                if key not in seen_chains:
+                    seen_chains.add(key)
+                    chains.append(c)
+        if not chains:
+            st.success("No multi-finding attack chains confirmed on current data.")
+        else:
+            titles = df.set_index(df["finding_id"].astype(str))["title"].to_dict()
+            for i, c in enumerate(
+                sorted(chains, key=lambda x: x.get("likelihood", 0), reverse=True), 1
+            ):
+                likelihood = float(c.get("likelihood", 0))
+                with st.expander(
+                    f"Chain {i}: {c.get('composite_severity', '?').upper()} — "
+                    f"{c.get('kill_chain_stage', '?')} — {likelihood:.0%} likelihood — "
+                    f"suggested {c.get('suggested_bucket', '?')}"
+                ):
+                    st.write(c.get("narrative", ""))
+                    for n, fid in enumerate(c.get("finding_ids", []), 1):
+                        st.markdown(f"{n}. {titles.get(fid, fid)}")
+
+        # ---- escalations ----
+        st.subheader("⬆️ AI-Suggested Escalations")
+        esc = df[df["ai_suggested_bucket"].notna()]
+        if esc.empty:
+            st.success("No escalations suggested.")
+        else:
+            st.dataframe(
+                esc[["risk_bucket", "ai_suggested_bucket", "title", "risk_score"]]
+                .rename(columns={"risk_bucket": "current", "ai_suggested_bucket": "suggested"}),
+                use_container_width=True,
+            )
+
+        # ---- triage: likely false positives ----
+        st.subheader("🧹 Likely False Positives (AI Triage)")
+        fp = df[df["ai_fp_likelihood"].notna() & (df["ai_fp_likelihood"] >= 0.8)]
+        if fp.empty:
+            st.info("No high-confidence false-positive candidates.")
+        else:
+            st.caption(f"{len(fp)} finding(s) flagged at ≥80% FP likelihood — review and dismiss to cut noise.")
+            st.dataframe(
+                fp[["ai_fp_likelihood", "title", "tool", "module", "risk_bucket", "ai_reasoning"]]
+                .sort_values("ai_fp_likelihood", ascending=False),
+                use_container_width=True,
+            )
+
+        # ---- remediation summaries ----
+        st.subheader("🔧 AI Remediation Plans (P0/P1)")
+        rem = df[df["ai_remediation"].notna()]
+        if rem.empty:
+            st.info("No AI remediation plans on current data.")
+        else:
+            st.dataframe(
+                rem[["risk_bucket", "title", "ai_remediation"]],
                 use_container_width=True,
             )
 

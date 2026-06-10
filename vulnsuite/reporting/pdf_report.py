@@ -75,6 +75,7 @@ th { background: #f0f4f8; font-weight: bold; }
 .audit-block { margin-top: 40px; padding: 10px; border: 1px dashed #888; font-size: 8pt; color: #555; }
 .ai-briefing { white-space: pre-line; background: #f7f9fb; border-left: 4px solid #0a2540; padding: 10px 14px; margin: 10px 0; }
 .ai-note { font-size: 8pt; color: #777; font-style: italic; }
+.threat-badge { background: #b00020; color: white; padding: 1px 5px; border-radius: 3px; font-size: 7pt; font-weight: bold; }
 </style></head><body>
 
 <div class="cover">
@@ -111,7 +112,7 @@ th { background: #f0f4f8; font-weight: bold; }
 
 <h2>Top 10 Risks</h2>
 <table>
-<tr><th>#</th><th>Bucket</th><th>Score</th><th>Title</th><th>Asset</th><th>Tool</th><th>CVE</th></tr>
+<tr><th>#</th><th>Bucket</th><th>Score</th><th>Title</th><th>Asset</th><th>Tool</th><th>CVE</th><th>Live Threat</th></tr>
 {% for f in top_risks %}
 <tr>
   <td>{{ loop.index }}</td>
@@ -121,9 +122,25 @@ th { background: #f0f4f8; font-weight: bold; }
   <td>{{ asset_names.get(f.asset_id|string, '-') }}</td>
   <td>{{ f.tool }}</td>
   <td>{{ f.cve|join(', ') or '-' }}</td>
+  <td>{% if live_threats.get(f.finding_id|string) %}<span class="threat-badge">{{ live_threats[f.finding_id|string] }}</span>{% else %}-{% endif %}</td>
 </tr>
 {% endfor %}
 </table>
+
+{% if attack_chains %}
+<h2>Confirmed Attack Chains</h2>
+<p class="ai-note">Multi-finding attack paths identified and adversarially verified by Claude Fable 5. Each chain composes findings that are individually scored lower than the path they enable.</p>
+{% for chain in attack_chains %}
+<h3>Chain {{ loop.index }} — {{ chain.composite_severity|upper }} ({{ chain.kill_chain_stage }}, likelihood {{ "%.0f"|format(chain.likelihood * 100) }}%)</h3>
+<p><strong>Suggested bucket: {{ chain.suggested_bucket }}.</strong> {{ chain.narrative }}</p>
+<table>
+<tr><th>Step</th><th>Finding</th><th>Tool</th><th>Bucket</th></tr>
+{% for step in chain.steps %}
+<tr><td>{{ loop.index }}</td><td>{{ step.title }}</td><td>{{ step.tool }}</td><td>{{ step.bucket or '-' }}</td></tr>
+{% endfor %}
+</table>
+{% endfor %}
+{% endif %}
 
 <h2>Module Breakdown</h2>
 <table>
@@ -211,6 +228,8 @@ class PDFReportGenerator:
         compliance_rows = self._compliance_rows(findings)
         findings_by_asset = self._group_by_asset(findings)
         content_hash = self._hash_findings(findings)
+        live_threats = self._live_threats(findings)
+        attack_chains = self._attack_chains(findings)
 
         html = self.template.render(
             findings=findings,
@@ -226,6 +245,8 @@ class PDFReportGenerator:
             now=datetime.now(timezone.utc),
             content_hash=content_hash,
             ai_summary=ai_summary,
+            live_threats=live_threats,
+            attack_chains=attack_chains,
         )
 
         HTML(string=html).write_pdf(output_path)
@@ -287,6 +308,55 @@ class PDFReportGenerator:
         for f in sorted(findings, key=lambda x: x.risk_score, reverse=True):
             out.setdefault(str(f.asset_id), []).append(f)
         return out
+
+    @staticmethod
+    def _live_threats(findings: list[Finding]) -> dict[str, str]:
+        """finding_id -> short badge text from AI threat intel."""
+        out: dict[str, str] = {}
+        for f in findings:
+            intel = (f.evidence.raw or {}).get("ai_threat_intel") if f.evidence else None
+            if not isinstance(intel, dict):
+                continue
+            flags = []
+            if intel.get("actively_exploited"):
+                flags.append("EXPLOITED IN WILD")
+            if intel.get("kev_listed"):
+                flags.append("CISA KEV")
+            if flags:
+                out[str(f.finding_id)] = " + ".join(flags)
+        return out
+
+    def _attack_chains(self, findings: list[Finding]) -> list[dict]:
+        """Unique verified chains across the report, with resolved step titles."""
+        by_id = {str(f.finding_id): f for f in findings}
+        seen: set[tuple] = set()
+        chains: list[dict] = []
+        for f in findings:
+            for chain in (f.evidence.raw or {}).get("ai_attack_chains", []) if f.evidence else []:
+                if not isinstance(chain, dict):
+                    continue
+                key = (tuple(chain.get("finding_ids", [])), chain.get("narrative", ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                steps = []
+                for fid in chain.get("finding_ids", []):
+                    member = by_id.get(fid)
+                    steps.append({
+                        "title": member.title if member else fid,
+                        "tool": member.tool if member else "-",
+                        "bucket": member.risk_bucket if member else None,
+                    })
+                chains.append({
+                    "narrative": chain.get("narrative", ""),
+                    "composite_severity": chain.get("composite_severity", "high"),
+                    "likelihood": float(chain.get("likelihood", 0.0)),
+                    "suggested_bucket": chain.get("suggested_bucket", "-"),
+                    "kill_chain_stage": chain.get("kill_chain_stage", "-"),
+                    "steps": steps,
+                })
+        chains.sort(key=lambda c: c["likelihood"], reverse=True)
+        return chains
 
     @staticmethod
     def _hash_findings(findings: list[Finding]) -> str:

@@ -121,6 +121,23 @@ class FindingResponse(BaseModel):
     tool: str
     module: str
     cve: list[str]
+    # AI enrichment (Claude Fable 5) — advisory signals, None when not enriched
+    ai_fp_likelihood: float | None = None
+    ai_actively_exploited: bool = False
+    ai_kev_listed: bool = False
+    ai_suggested_bucket: str | None = None
+    ai_attack_chain_count: int = 0
+
+
+def _ai_fields(evidence: dict | None) -> dict:
+    raw = (evidence or {}).get("raw") or {}
+    return {
+        "ai_fp_likelihood": (raw.get("ai_triage") or {}).get("fp_likelihood"),
+        "ai_actively_exploited": bool((raw.get("ai_threat_intel") or {}).get("actively_exploited")),
+        "ai_kev_listed": bool((raw.get("ai_threat_intel") or {}).get("kev_listed")),
+        "ai_suggested_bucket": raw.get("ai_suggested_bucket"),
+        "ai_attack_chain_count": len(raw.get("ai_attack_chains") or []),
+    }
 
 
 @app.on_event("startup")
@@ -278,6 +295,7 @@ async def list_findings(
                 tool=row.tool,
                 module=row.module,
                 cve=list(row.cve or []),
+                **_ai_fields(row.evidence),
             )
             for row in rows
         ]
