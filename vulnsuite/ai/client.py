@@ -87,6 +87,10 @@ def _metadata(tenant_id: UUID | str) -> dict[str, str]:
     return {"user_id": f"tenant:{tenant_id}"}
 
 
+_TASK_BUDGET_BETA = "task-budgets-2026-03-13"
+_TASK_BUDGET_MIN = 20000
+
+
 def parse_structured(
     *,
     system: str,
@@ -95,29 +99,54 @@ def parse_structured(
     effort: str,
     tenant_id: UUID | str,
     max_tokens: int = 16000,
+    task_budget: int | None = None,
 ) -> T:
-    """One structured-output call. Raises AIEnrichmentError on any failure."""
+    """One structured-output call. Raises AIEnrichmentError on any failure.
+
+    ``task_budget`` (beta) gives Fable 5 a self-moderated token budget for
+    deep analysis. If the budgeted request fails for any reason, we retry
+    once without it — the budget is an optimization, never a dependency.
+    """
     if not ai_active():
         raise AIEnrichmentError("AI layer disabled")
     settings = get_settings()
-    try:
+
+    def _call(with_budget: bool) -> T:
+        output_config: dict[str, Any] = {"effort": _effort(effort)}
+        extra: dict[str, Any] = {}
+        if with_budget:
+            output_config["task_budget"] = {"type": "tokens", "total": task_budget}
+            extra["extra_headers"] = {"anthropic-beta": _TASK_BUDGET_BETA}
         response = get_sync_client().messages.parse(
             model=settings.ai.model,
             max_tokens=max_tokens,
             thinking={"type": "adaptive"},
-            output_config={"effort": _effort(effort)},
+            output_config=output_config,
             system=_system_blocks(system),
             metadata=_metadata(tenant_id),
             messages=[{"role": "user", "content": user}],
             output_format=output_model,
+            **extra,
         )
         parsed = response.parsed_output
         if parsed is None:
             raise AIEnrichmentError("model returned no parseable output")
         return parsed
+
+    use_budget = task_budget is not None and task_budget >= _TASK_BUDGET_MIN
+    try:
+        return _call(use_budget)
     except AIEnrichmentError:
         raise
     except Exception as exc:  # noqa: BLE001 - boundary: degrade, never crash the pipeline
+        if use_budget:
+            logger.warning("task-budget call failed (%s); retrying without budget", exc)
+            try:
+                return _call(False)
+            except AIEnrichmentError:
+                raise
+            except Exception as exc2:  # noqa: BLE001
+                raise AIEnrichmentError(f"{type(exc2).__name__}: {exc2}") from exc2
         raise AIEnrichmentError(f"{type(exc).__name__}: {exc}") from exc
 
 
@@ -147,6 +176,62 @@ def generate_text(
         if not text:
             raise AIEnrichmentError("model returned empty text")
         return text
+    except AIEnrichmentError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise AIEnrichmentError(f"{type(exc).__name__}: {exc}") from exc
+
+
+WEB_TOOLS: list[dict[str, Any]] = [
+    # _20260209 versions carry dynamic filtering: Fable 5 filters results
+    # in a server-side sandbox before they reach the context window.
+    {"type": "web_search_20260209", "name": "web_search", "max_uses": 12},
+    {"type": "web_fetch_20260209", "name": "web_fetch", "max_uses": 8},
+]
+
+
+def research_web(
+    *,
+    system: str,
+    user: str,
+    effort: str,
+    tenant_id: UUID | str,
+    max_tokens: int = 16000,
+    max_continuations: int = 5,
+) -> str:
+    """Web-grounded research turn using server-side search/fetch tools.
+
+    Server tools run on Anthropic's side; we only handle ``pause_turn``
+    (server loop hit its iteration limit) by re-sending to resume.
+    Returns the final text. Raises AIEnrichmentError on failure.
+    """
+    if not ai_active():
+        raise AIEnrichmentError("AI layer disabled")
+    settings = get_settings()
+    messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
+    try:
+        for _ in range(max_continuations + 1):
+            response = get_sync_client().messages.create(
+                model=settings.ai.model,
+                max_tokens=max_tokens,
+                thinking={"type": "adaptive"},
+                output_config={"effort": _effort(effort)},
+                system=_system_blocks(system),
+                metadata=_metadata(tenant_id),
+                tools=WEB_TOOLS,
+                messages=messages,
+            )
+            if response.stop_reason == "pause_turn":
+                messages = [
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": response.content},
+                ]
+                continue
+            text = "".join(b.text for b in response.content if b.type == "text").strip()
+            if not text:
+                raise AIEnrichmentError("web research returned empty text")
+            return text
+        raise AIEnrichmentError("web research exceeded continuation limit")
     except AIEnrichmentError:
         raise
     except Exception as exc:  # noqa: BLE001

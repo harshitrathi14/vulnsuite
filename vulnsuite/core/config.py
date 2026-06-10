@@ -152,6 +152,8 @@ class AISettings(BaseSettings):
     compliance_enabled: bool = True
     narrative_enabled: bool = True
     copilot_enabled: bool = True
+    threat_intel_enabled: bool = True          # live web exploitation-status checks
+    copilot_web_search: bool = True            # let the copilot search the live web
     dedup_assist_enabled: bool = False         # suggestions-only; opt-in
 
     # Cost/latency shaping
@@ -160,16 +162,23 @@ class AISettings(BaseSettings):
     max_findings_per_call: int = 40
     max_correlation_findings: int = 300        # cap for the single attack-chain call
     remediation_buckets: list[str] = Field(default_factory=lambda: ["P0", "P1"])
+    threat_intel_buckets: list[str] = Field(default_factory=lambda: ["P0", "P1"])
+    max_cves_per_intel_call: int = 8
     max_snippet_chars: int = 2000
     copilot_max_turns: int = 8
 
+    # Task budget (beta) for the deep correlation call: Fable 5 sees a
+    # running countdown and plans its analysis to fit. 0 disables.
+    correlation_task_budget: int = 64000       # minimum the API accepts is 20000
+
     # Fable 5 effort per feature: low|medium|high|xhigh|max
-    triage_effort: str = "low"
-    remediation_effort: str = "medium"
-    correlation_effort: str = "high"
-    compliance_effort: str = "low"
-    narrative_effort: str = "medium"
-    copilot_effort: str = "medium"
+    triage_effort: str = "medium"
+    remediation_effort: str = "high"
+    correlation_effort: str = "max"
+    compliance_effort: str = "medium"
+    narrative_effort: str = "high"
+    copilot_effort: str = "high"
+    threat_intel_effort: str = "high"
 
 
 class AuthSettings(BaseSettings):

@@ -180,6 +180,7 @@ to opt in) and force-disabled in air-gap mode regardless of flags.
 | Report Narratives | `ai/narrate.py` | Board-level executive briefing in the PDF; CERT-In incident draft (human sign-off gate unchanged). |
 | Security Copilot | `ai/copilot.py` + `POST /api/v1/copilot/query` | Natural-language questions over findings via read-only, RLS-scoped query tools — the model never writes SQL. |
 | Dedup Assist | `ai/dedup_assist.py` | Merge *suggestions* for unkeyed modules (network/cloud/discovery); never auto-merges. Opt-in. |
+| Live Threat Intel | `ai/threat_intel.py` | Web-grounded exploitation status for P0/P1 CVEs — CISA KEV, in-the-wild reports, public PoCs — via Fable 5 server-side web search with dynamic filtering. Only CVE IDs leave the boundary. |
 
 **Guardrails (non-configurable):**
 - `ai/redaction.py` masks secret material (AWS keys, PEM blocks, JWTs,
@@ -189,5 +190,14 @@ to opt in) and force-disabled in air-gap mode regardless of flags.
 - Every stage degrades to a no-op on failure — findings always flow.
 
 **Pipeline:** `scan_asset` → persist → enqueue `ai_enrich_findings`
-(queue `vulnsuite.ai`) → triage → remediate → correlate → map → suggest →
+(queue `vulnsuite.ai`) → triage → **threat intel** → remediate → correlate
+(coverage-first finder at `effort: max` with a 64K task budget, then an
+**adversarial verifier** that refutes weak chains) → map → suggest →
 evidence updates written back under RLS.
+
+**Fable 5 capabilities in use:** adaptive thinking; `effort` tiers up to
+`max`; task budgets (beta) on the deep correlation call; structured
+outputs everywhere; Batches API at 50% price; prompt-cached frozen
+system prompts; server-side `web_search`/`web_fetch` with dynamic
+filtering (threat intel + copilot, which searches CVE IDs and product
+names only — never tenant data).

@@ -205,6 +205,12 @@ async def ask(tenant_id: UUID, question: str) -> CopilotAnswer:
     messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
     tool_calls = 0
 
+    tools = list(TOOLS)
+    if settings.ai.copilot_web_search:
+        # Server-side web search (dynamic filtering) so analysts can ask
+        # "is CVE-X exploited in the wild?" and get a live, cited answer.
+        tools.append({"type": "web_search_20260209", "name": "web_search", "max_uses": 8})
+
     for _ in range(settings.ai.copilot_max_turns):
         response = await client.messages.create(
             model=settings.ai.model,
@@ -213,9 +219,14 @@ async def ask(tenant_id: UUID, question: str) -> CopilotAnswer:
             output_config={"effort": settings.ai.copilot_effort},
             system=[{"type": "text", "text": prompts.COPILOT_SYSTEM, "cache_control": {"type": "ephemeral"}}],
             metadata={"user_id": f"tenant:{tenant_id}"},
-            tools=TOOLS,
+            tools=tools,
             messages=messages,
         )
+
+        if response.stop_reason == "pause_turn":
+            # Server-side tool loop hit its iteration limit; re-send to resume.
+            messages.append({"role": "assistant", "content": response.content})
+            continue
 
         if response.stop_reason != "tool_use":
             answer = "".join(b.text for b in response.content if b.type == "text").strip()

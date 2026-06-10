@@ -425,6 +425,7 @@ def ai_enrich_findings(
     from ..ai.correlate import correlate_findings
     from ..ai.dedup_assist import suggest_merges
     from ..ai.remediate import remediate_findings
+    from ..ai.threat_intel import enrich_threat_intel
     from ..ai.triage import (
         apply_triage_batch,
         submit_triage_batches,
@@ -456,7 +457,10 @@ def ai_enrich_findings(
         else:
             findings = triage_findings(findings, asset)
 
-    # 2-5) remaining stages each degrade independently
+    # 2-6) remaining stages each degrade independently. Threat intel runs
+    # before remediation/correlation so live exploitation status is part
+    # of the evidence those stages reason over.
+    findings = enrich_threat_intel(findings)
     findings = remediate_findings(findings, asset)
     findings = correlate_findings(findings, asset)
     findings = map_findings_rbi(findings)

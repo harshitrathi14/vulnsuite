@@ -218,7 +218,23 @@ class TestCorrelation:
         )
 
         def fake_parse(**kwargs):
-            return CorrelationResult(chains=[chain], posture_note="tight chain")
+            from vulnsuite.ai.schemas import (
+                ChainVerdict,
+                ChainVerification,
+                ChainVerificationResult,
+            )
+
+            if kwargs["output_model"] is CorrelationResult:
+                return CorrelationResult(chains=[chain], posture_note="tight chain")
+            # adversarial verifier confirms the chain at its original likelihood
+            return ChainVerificationResult(
+                verifications=[
+                    ChainVerification(
+                        chain_index=0, verdict=ChainVerdict.CONFIRMED,
+                        adjusted_likelihood=chain.likelihood, note="holds",
+                    )
+                ]
+            )
 
         monkeypatch.setattr(ai_correlate, "parse_structured", fake_parse)
         out = ai_correlate.correlate_findings([secret, exposed, unrelated])
@@ -269,3 +285,144 @@ class TestSchemaCleaning:
     def test_user_turn_is_deterministic(self, make_finding):
         f = make_finding(Module.SAST, severity=Severity.HIGH)
         assert render_user_turn([f]) == render_user_turn([f])
+
+
+# ---------- threat intelligence ----------
+
+class TestThreatIntel:
+    def _verdict(self, cve: str):
+        from vulnsuite.ai.schemas import IntelStatus, ThreatIntelVerdict
+
+        return ThreatIntelVerdict(
+            cve=cve,
+            actively_exploited=IntelStatus.YES,
+            kev_listed=IntelStatus.YES,
+            public_poc=IntelStatus.YES,
+            patch_available=IntelStatus.YES,
+            exploit_maturity="mass-exploitation",
+            summary="Actively exploited by ransomware groups.",
+            sources=["https://www.cisa.gov/kev"],
+        )
+
+    def test_annotates_by_cve_and_respects_buckets(self, ai_on, monkeypatch, make_finding):
+        from vulnsuite.ai import threat_intel
+        from vulnsuite.ai.schemas import ThreatIntelBatchResult
+
+        hot = make_finding(Module.SCA, risk_bucket="P0", cve=["CVE-2024-3094"])
+        cold = make_finding(Module.SCA, risk_bucket="P3", cve=["CVE-2020-0001"])
+        researched: list[str] = []
+
+        def fake_research(**kwargs):
+            researched.append(kwargs["user"])
+            return "CVE-2024-3094 is in KEV, mass exploitation reported."
+
+        def fake_parse(**kwargs):
+            return ThreatIntelBatchResult(verdicts=[self._verdict("CVE-2024-3094")])
+
+        monkeypatch.setattr(threat_intel, "research_web", fake_research)
+        monkeypatch.setattr(threat_intel, "parse_structured", fake_parse)
+        out = threat_intel.enrich_threat_intel([hot, cold])
+
+        intel = out[0].evidence.raw["ai_threat_intel"]
+        assert intel["actively_exploited"] is True
+        assert intel["kev_listed"] is True
+        assert "ai_threat_intel" not in (out[1].evidence.raw or {})
+        # P3 CVE never researched (bucket filter)
+        assert all("CVE-2020-0001" not in u for u in researched)
+
+    def test_research_failure_degrades(self, ai_on, monkeypatch, make_finding):
+        from vulnsuite.ai import threat_intel
+
+        f = make_finding(Module.SCA, risk_bucket="P0", cve=["CVE-2024-3094"])
+
+        def boom(**kwargs):
+            raise ai_client.AIEnrichmentError("network down")
+
+        monkeypatch.setattr(threat_intel, "research_web", boom)
+        assert threat_intel.enrich_threat_intel([f]) == [f]
+
+    def test_intel_signal_flows_into_payload(self, ai_on, make_finding):
+        f = make_finding(
+            Module.SCA,
+            risk_bucket="P0",
+            cve=["CVE-2024-3094"],
+            evidence=Evidence(
+                raw={"ai_threat_intel": {"actively_exploited": True, "kev_listed": True, "verdicts": []}}
+            ),
+        )
+        payload = finding_payload(f)
+        assert payload["live_threat"]["actively_exploited"] is True
+
+
+# ---------- adversarial chain verification ----------
+
+class TestChainVerification:
+    def _chain(self, ids):
+        return AttackChain(
+            finding_ids=[str(i) for i in ids],
+            narrative="Credential unlocks exposed service.",
+            composite_severity=ChainSeverity.CRITICAL,
+            likelihood=0.9,
+            suggested_bucket="P0",
+            kill_chain_stage="initial-access",
+        )
+
+    def test_refuted_chains_dropped_confirmed_kept(self, ai_on, monkeypatch, make_finding):
+        from vulnsuite.ai.schemas import (
+            ChainVerdict,
+            ChainVerification,
+            ChainVerificationResult,
+        )
+
+        a = make_finding(Module.SECRETS, risk_bucket="P2")
+        b = make_finding(Module.ASM, risk_bucket="P2")
+        c = make_finding(Module.SCA, risk_bucket="P2")
+
+        good = self._chain([a.finding_id, b.finding_id])
+        bad = self._chain([b.finding_id, c.finding_id])
+
+        def fake_parse(**kwargs):
+            if kwargs["output_model"] is CorrelationResult:
+                return CorrelationResult(chains=[good, bad], posture_note="x")
+            return ChainVerificationResult(
+                verifications=[
+                    ChainVerification(
+                        chain_index=0, verdict=ChainVerdict.CONFIRMED,
+                        adjusted_likelihood=0.55, note="holds",
+                    ),
+                    ChainVerification(
+                        chain_index=1, verdict=ChainVerdict.REFUTED,
+                        adjusted_likelihood=0.05, note="isolated exposure blocks it",
+                    ),
+                ]
+            )
+
+        monkeypatch.setattr(ai_correlate, "parse_structured", fake_parse)
+        out = ai_correlate.correlate_findings([a, b, c])
+        by_id = {str(f.finding_id): f for f in out}
+
+        chains_a = by_id[str(a.finding_id)].evidence.raw["ai_attack_chains"]
+        assert len(chains_a) == 1
+        assert chains_a[0]["likelihood"] == 0.55          # verifier's calibration wins
+        # finding only in the refuted chain gets nothing
+        assert "ai_attack_chains" not in (by_id[str(c.finding_id)].evidence.raw or {})
+
+    def test_verifier_failure_keeps_all_chains(self, ai_on, monkeypatch, make_finding):
+        from vulnsuite.ai.schemas import ChainVerificationResult  # noqa: F401
+
+        a = make_finding(Module.SECRETS, risk_bucket="P2")
+        b = make_finding(Module.ASM, risk_bucket="P2")
+        chain = self._chain([a.finding_id, b.finding_id])
+        calls = {"n": 0}
+
+        def fake_parse(**kwargs):
+            calls["n"] += 1
+            if kwargs["output_model"] is CorrelationResult:
+                return CorrelationResult(chains=[chain], posture_note="x")
+            raise ai_client.AIEnrichmentError("verifier down")
+
+        monkeypatch.setattr(ai_correlate, "parse_structured", fake_parse)
+        out = ai_correlate.correlate_findings([a, b])
+        by_id = {str(f.finding_id): f for f in out}
+        assert len(by_id[str(a.finding_id)].evidence.raw["ai_attack_chains"]) == 1
+        assert calls["n"] == 2

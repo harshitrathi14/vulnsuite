@@ -17,13 +17,15 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+import json
+
 from ..core.config import get_settings
 from ..core.schema import Asset, Finding
 from . import prompts
 from .client import AIEnrichmentError, ai_active, parse_structured
 from .payloads import render_user_turn
 from .redaction import redact_finding
-from .schemas import CorrelationResult
+from .schemas import AttackChain, ChainVerificationResult, CorrelationResult
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +36,52 @@ def _outranks(suggested: str, current: str | None) -> bool:
     return _BUCKET_RANK.get(suggested, 9) < _BUCKET_RANK.get(current or "P4", 4)
 
 
+def _verify_chains(
+    chains: list[AttackChain], pool: list[Finding], asset: Asset | None,
+) -> list[AttackChain]:
+    """Adversarial second pass: a skeptic tries to refute each chain.
+
+    Finder runs coverage-first (report everything), so precision comes
+    from here. If verification itself fails, all chains survive — a
+    missing filter is safer than silently dropping attack paths.
+    """
+    settings = get_settings()
+    chain_digest = json.dumps(
+        [c.model_dump(mode="json") for c in chains], sort_keys=True,
+    )
+    try:
+        result = parse_structured(
+            system=prompts.CHAIN_VERIFY_SYSTEM,
+            user=render_user_turn(
+                [redact_finding(f) for f in pool],
+                asset,
+                instruction="Candidate chains to verify (attack their weakest links):\n"
+                + chain_digest,
+            ),
+            output_model=ChainVerificationResult,
+            effort=settings.ai.correlation_effort,
+            tenant_id=pool[0].tenant_id,
+        )
+    except AIEnrichmentError as exc:
+        logger.warning("chain verification failed, keeping all %d chains: %s", len(chains), exc)
+        return chains
+
+    confirmed: list[AttackChain] = []
+    for v in result.verifications:
+        if v.verdict.value != "confirmed" or not (0 <= v.chain_index < len(chains)):
+            continue
+        chain = chains[v.chain_index]
+        confirmed.append(
+            chain.model_copy(update={"likelihood": v.adjusted_likelihood})
+        )
+    logger.info(
+        "ai chain verification: %d/%d chain(s) confirmed", len(confirmed), len(chains),
+    )
+    return confirmed
+
+
 def correlate_findings(findings: list[Finding], asset: Asset | None = None) -> list[Finding]:
-    """Single-call attack-chain analysis over one asset's findings."""
+    """Coverage-first attack-chain analysis + adversarial verification."""
     settings = get_settings()
     if not ai_active() or not settings.ai.correlation_enabled:
         return findings
@@ -56,6 +102,7 @@ def correlate_findings(findings: list[Finding], asset: Asset | None = None) -> l
             effort=settings.ai.correlation_effort,
             tenant_id=pool[0].tenant_id,
             max_tokens=16000,
+            task_budget=settings.ai.correlation_task_budget or None,
         )
     except AIEnrichmentError as exc:
         logger.warning("correlation failed (%d findings): %s", len(pool), exc)
@@ -63,6 +110,11 @@ def correlate_findings(findings: list[Finding], asset: Asset | None = None) -> l
 
     if not result.chains:
         logger.info("ai correlation: no chains found across %d findings", len(pool))
+        return findings
+
+    result = result.model_copy(update={"chains": _verify_chains(result.chains, pool, asset)})
+    if not result.chains:
+        logger.info("ai correlation: all candidate chains refuted by verifier")
         return findings
 
     stamp = {

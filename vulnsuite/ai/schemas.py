@@ -101,6 +101,57 @@ class CorrelationResult(BaseModel):
     )
 
 
+# ---------- Chain verification (adversarial second pass) ----------
+
+class ChainVerdict(str, Enum):
+    CONFIRMED = "confirmed"
+    REFUTED = "refuted"
+
+
+class ChainVerification(BaseModel):
+    chain_index: int = Field(description="0-based index of the chain in the list you were given")
+    verdict: ChainVerdict = Field(
+        description="refuted when any link is implausible or the composition does not hold"
+    )
+    adjusted_likelihood: float = Field(
+        description="Your own calibrated 0.0-1.0 likelihood, replacing the finder's"
+    )
+    note: str = Field(description="One or two sentences: why it holds or where it breaks")
+
+
+class ChainVerificationResult(BaseModel):
+    verifications: list[ChainVerification]
+
+
+# ---------- Threat intelligence (live web) ----------
+
+class IntelStatus(str, Enum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+class ThreatIntelVerdict(BaseModel):
+    cve: str = Field(description="CVE ID, echoed back verbatim")
+    actively_exploited: IntelStatus = Field(
+        description="Evidence of in-the-wild exploitation right now"
+    )
+    kev_listed: IntelStatus = Field(description="Present in CISA Known Exploited Vulnerabilities")
+    public_poc: IntelStatus = Field(
+        description="Public proof-of-concept or weaponized exploit (Metasploit, ExploitDB, GitHub)"
+    )
+    patch_available: IntelStatus
+    exploit_maturity: str = Field(
+        description="One of: none-observed, poc, weaponized, mass-exploitation"
+    )
+    summary: str = Field(description="2-3 sentences: current threat picture for this CVE")
+    sources: list[str] = Field(description="URLs supporting the verdict")
+
+
+class ThreatIntelBatchResult(BaseModel):
+    verdicts: list[ThreatIntelVerdict]
+
+
 # ---------- Compliance (RBI CSF) ----------
 
 class RBIMappingVerdict(BaseModel):

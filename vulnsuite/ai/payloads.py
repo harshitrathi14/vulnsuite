@@ -46,6 +46,18 @@ def finding_payload(finding: Finding) -> dict[str, Any]:
         "snippet": (evidence.snippet or "")[:max_chars] or None,
         "evidence": {k: raw[k] for k in _EVIDENCE_RAW_KEYS if k in raw},
     }
+    # Compact live-threat signal so downstream stages (remediation,
+    # attack-chain correlation) reason over current exploitation status.
+    intel = raw.get("ai_threat_intel")
+    if isinstance(intel, dict):
+        payload["live_threat"] = {
+            "actively_exploited": intel.get("actively_exploited"),
+            "kev_listed": intel.get("kev_listed"),
+            "summaries": [
+                v.get("summary") for v in intel.get("verdicts", [])[:3]
+                if isinstance(v, dict)
+            ],
+        }
     return {k: v for k, v in payload.items() if v not in (None, "", [], {})}
 
 
