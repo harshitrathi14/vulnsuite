@@ -41,8 +41,9 @@ from ..compliance.certin_export import build_incident_report, write_report
 from ..core.config import get_settings
 from ..core.db import FindingRow, tenant_session, upsert_assets
 from ..core.epss_provider import build_default_provider
+from ..core.kev_provider import build_kev_provider
 from ..core.orchestrator import CollectorCall, Orchestrator, OrchestratorConfig
-from ..core.risk_engine import RiskEngine
+from ..core.risk_engine import RiskConfig, RiskEngine
 from ..core.schema import (
     Asset,
     AssetType,
@@ -184,7 +185,21 @@ def scan_asset(
             if settings.scanning.offline_epss_csv
             else None,
         )
-        risk = RiskEngine(epss_provider=epss)
+        kev = await build_kev_provider(
+            redis_url=None if settings.scanning.offline_mode else settings.redis.url,
+            offline_json_path=str(settings.scanning.offline_kev_json)
+            if settings.scanning.offline_kev_json
+            else None,
+        )
+        risk = RiskEngine(
+            epss_provider=epss,
+            kev_provider=kev,
+            config=RiskConfig(
+                escalation_enabled=settings.risk.escalation_enabled,
+                kev_floor_score=settings.risk.kev_floor_score,
+                active_exploit_floor_score=settings.risk.active_exploit_floor_score,
+            ),
+        )
         orch = Orchestrator(
             risk,
             OrchestratorConfig(
@@ -373,6 +388,10 @@ def scan_asset(
                 "asset_id": str(asset.asset_id),
                 "summary": report.summary,
                 "persisted": report.persisted_count,
+                # Cross-scan delta — "new" is the catch-it-early signal
+                "new": report.new_count,
+                "reopened": report.reopened_count,
+                "fixed": report.fixed_count,
                 "errors": report.errors,
                 "ai_enrichment_task": ai_task_id,
             }
@@ -389,19 +408,28 @@ def scan_asset(
 
 
 async def _persist_evidence_updates(tenant_id: UUID, findings: list[Finding]) -> int:
-    """Write AI-annotated evidence back to rows that gained ai_* keys."""
+    """Write AI-annotated evidence (and any escalated risk) back to rows.
+
+    Persists evidence plus risk_score/risk_bucket so live-exploitation
+    escalation (KEV / actively-exploited) survives into the DB and lights
+    up the dashboard, SIEM, and reports.
+    """
     from sqlalchemy import update
 
     count = 0
     async with tenant_session(tenant_id) as session:
         for f in findings:
             raw = f.evidence.raw or {}
-            if not any(key.startswith("ai_") for key in raw):
+            if not any(key.startswith("ai_") or key == "risk_escalated_by" for key in raw):
                 continue
             await session.execute(
                 update(FindingRow)
                 .where(FindingRow.finding_id == f.finding_id)
-                .values(evidence=f.evidence.model_dump(mode="json"))
+                .values(
+                    evidence=f.evidence.model_dump(mode="json"),
+                    risk_score=f.risk_score,
+                    risk_bucket=f.risk_bucket,
+                )
             )
             count += 1
         await session.commit()
@@ -461,6 +489,25 @@ def ai_enrich_findings(
     # before remediation/correlation so live exploitation status is part
     # of the evidence those stages reason over.
     findings = enrich_threat_intel(findings)
+
+    # Deterministic escalation: live in-the-wild exploitation learned from
+    # threat intel forces the risk score up (KEV/active-exploit floor).
+    risk = RiskEngine(
+        config=RiskConfig(
+            escalation_enabled=settings.risk.escalation_enabled,
+            kev_floor_score=settings.risk.kev_floor_score,
+            active_exploit_floor_score=settings.risk.active_exploit_floor_score,
+        )
+    )
+    for i, f in enumerate(findings):
+        intel = (f.evidence.raw or {}).get("ai_threat_intel") or {}
+        if intel.get("actively_exploited") or intel.get("kev_listed"):
+            findings[i] = risk.apply_exploitation_escalation(
+                f,
+                kev=bool(intel.get("kev_listed")),
+                actively_exploited=bool(intel.get("actively_exploited")),
+            )
+
     findings = remediate_findings(findings, asset)
     findings = correlate_findings(findings, asset)
     findings = map_findings_rbi(findings)

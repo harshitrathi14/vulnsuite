@@ -31,6 +31,11 @@ class EPSSProvider(Protocol):
     def get(self, cve: str) -> float: ...
 
 
+class KEVProvider(Protocol):
+    """Pluggable CISA KEV lookup (core/kev_provider.KEVProvider, or a stub)."""
+    def is_kev(self, cve: str) -> bool: ...
+
+
 class StaticEPSS:
     """Fallback when no CVE or lookup fails. Derived from CVSS as a proxy."""
     def get(self, cve: str) -> float:  # noqa: ARG002
@@ -45,6 +50,10 @@ class RiskConfig:
     p3: float = 0.5
     # Minimum EPSS floor so a finding with no CVE still carries some weight
     epss_floor: float = 0.05
+    # Deterministic escalation: real-world exploitation overrides the formula.
+    escalation_enabled: bool = True
+    kev_floor_score: float = 7.0             # CISA KEV-listed -> at least P0
+    active_exploit_floor_score: float = 7.0  # live in-the-wild exploitation -> at least P0
 
 
 class RiskEngine:
@@ -52,8 +61,10 @@ class RiskEngine:
         self,
         epss_provider: EPSSProvider | None = None,
         config: RiskConfig | None = None,
+        kev_provider: KEVProvider | None = None,
     ) -> None:
         self.epss = epss_provider or StaticEPSS()
+        self.kev = kev_provider
         self.cfg = config or RiskConfig()
 
     # ---------- core math ----------
@@ -91,14 +102,89 @@ class RiskEngine:
         if score >= c.p3: return "P3"
         return "P4"
 
+    # ---------- escalation ----------
+
+    def _is_kev(self, finding: Finding) -> bool:
+        return self.kev is not None and any(self.kev.is_kev(c) for c in finding.cve)
+
+    def _escalate(
+        self,
+        finding: Finding,
+        score: float,
+        *,
+        kev: bool,
+        actively_exploited: bool,
+    ) -> tuple[float, list[str]]:
+        """Apply deterministic floors. Real-world exploitation evidence
+        overrides the statistical formula — a KEV-listed or actively
+        exploited finding cannot sit below P0 by default."""
+        reasons: list[str] = []
+        if not self.cfg.escalation_enabled:
+            return score, reasons
+        if actively_exploited and score < self.cfg.active_exploit_floor_score:
+            score = self.cfg.active_exploit_floor_score
+        if actively_exploited:
+            reasons.append("active-exploitation")
+        if kev and score < self.cfg.kev_floor_score:
+            score = self.cfg.kev_floor_score
+        if kev:
+            reasons.append("cisa-kev")
+        return round(min(score, 10.0), 3), reasons
+
+    @staticmethod
+    def _stamp_escalation(finding: Finding, reasons: list[str], *, kev: bool) -> dict:
+        raw = dict((finding.evidence.raw or {}) if finding.evidence else {})
+        existing = list(raw.get("risk_escalated_by", []))
+        for r in reasons:
+            if r not in existing:
+                existing.append(r)
+        raw["risk_escalated_by"] = existing
+        if kev:
+            raw["kev_listed"] = True
+        return raw
+
+    def apply_exploitation_escalation(
+        self,
+        finding: Finding,
+        *,
+        kev: bool = False,
+        actively_exploited: bool = False,
+    ) -> Finding:
+        """Re-escalate an already-scored finding given exploitation evidence
+        learned after scan time (e.g. live threat intel). Returns the finding
+        unchanged when nothing applies."""
+        new_score, reasons = self._escalate(
+            finding, finding.risk_score, kev=kev, actively_exploited=actively_exploited,
+        )
+        if not reasons and new_score == finding.risk_score:
+            return finding
+        raw = self._stamp_escalation(finding, reasons, kev=kev)
+        return finding.model_copy(
+            update={
+                "risk_score": new_score,
+                "risk_bucket": self.bucket(new_score),
+                "evidence": finding.evidence.model_copy(update={"raw": raw}),
+            }
+        )
+
     # ---------- public API ----------
 
     def enrich(self, finding: Finding, asset: Asset) -> Finding:
-        """Return a copy of finding with risk_score + risk_bucket populated."""
+        """Return a copy of finding with risk_score + risk_bucket populated.
+
+        Applies CISA KEV escalation at scan time (the provider is queried
+        per-CVE). Live-exploitation escalation happens later, in the AI
+        enrichment task, via apply_exploitation_escalation."""
         if finding.asset_id != asset.asset_id:
             raise ValueError("asset/finding mismatch")
         s = self.score(finding, asset)
-        return finding.model_copy(update={"risk_score": s, "risk_bucket": self.bucket(s)})
+        kev = self._is_kev(finding)
+        s, reasons = self._escalate(finding, s, kev=kev, actively_exploited=False)
+        update: dict = {"risk_score": s, "risk_bucket": self.bucket(s)}
+        if reasons:
+            raw = self._stamp_escalation(finding, reasons, kev=kev)
+            update["evidence"] = finding.evidence.model_copy(update={"raw": raw})
+        return finding.model_copy(update=update)
 
     def enrich_batch(
         self, findings: Iterable[Finding], assets: dict[str, Asset],

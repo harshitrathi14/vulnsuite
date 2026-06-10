@@ -85,6 +85,11 @@ def normalize_for_siem(f: Finding, tenant_name: str) -> dict:
         "ai_kev_listed": bool((ev.get("ai_threat_intel") or {}).get("kev_listed")),
         "ai_attack_chain_count": len(ev.get("ai_attack_chains") or []),
         "ai_suggested_bucket": ev.get("ai_suggested_bucket"),
+        # ---- lifecycle + deterministic escalation ----
+        # ai_kev_listed also reflects scan-time KEV escalation, not just live intel.
+        "ai_kev_listed": bool((ev.get("ai_threat_intel") or {}).get("kev_listed")) or bool(ev.get("kev_listed")),
+        "risk_escalated": bool(ev.get("risk_escalated_by")),
+        "risk_escalated_by": list(ev.get("risk_escalated_by") or []),
     }
 
 

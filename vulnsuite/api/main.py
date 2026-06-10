@@ -121,6 +121,10 @@ class FindingResponse(BaseModel):
     tool: str
     module: str
     cve: list[str]
+    status: str
+    # Lifecycle (cross-scan)
+    is_new: bool = False
+    risk_escalated_by: list[str] = Field(default_factory=list)
     # AI enrichment (Claude Fable 5) — advisory signals, None when not enriched
     ai_fp_likelihood: float | None = None
     ai_actively_exploited: bool = False
@@ -131,13 +135,31 @@ class FindingResponse(BaseModel):
 
 def _ai_fields(evidence: dict | None) -> dict:
     raw = (evidence or {}).get("raw") or {}
+    intel = raw.get("ai_threat_intel") or {}
     return {
+        "risk_escalated_by": list(raw.get("risk_escalated_by") or []),
         "ai_fp_likelihood": (raw.get("ai_triage") or {}).get("fp_likelihood"),
-        "ai_actively_exploited": bool((raw.get("ai_threat_intel") or {}).get("actively_exploited")),
-        "ai_kev_listed": bool((raw.get("ai_threat_intel") or {}).get("kev_listed")),
+        "ai_actively_exploited": bool(intel.get("actively_exploited")),
+        "ai_kev_listed": bool(intel.get("kev_listed")) or bool(raw.get("kev_listed")),
         "ai_suggested_bucket": raw.get("ai_suggested_bucket"),
         "ai_attack_chain_count": len(raw.get("ai_attack_chains") or []),
     }
+
+
+def _finding_response(row) -> "FindingResponse":
+    return FindingResponse(
+        finding_id=row.finding_id,
+        title=row.title,
+        severity=row.severity,
+        risk_score=row.risk_score,
+        risk_bucket=row.risk_bucket,
+        tool=row.tool,
+        module=row.module,
+        cve=list(row.cve or []),
+        status=row.status,
+        is_new=bool(getattr(row, "is_new", False)),
+        **_ai_fields(row.evidence),
+    )
 
 
 @app.on_event("startup")
@@ -285,20 +307,25 @@ async def list_findings(
         if bucket:
             stmt = stmt.where(FindingRow.risk_bucket == bucket)
         rows = (await session.execute(stmt)).scalars().all()
-        return [
-            FindingResponse(
-                finding_id=row.finding_id,
-                title=row.title,
-                severity=row.severity,
-                risk_score=row.risk_score,
-                risk_bucket=row.risk_bucket,
-                tool=row.tool,
-                module=row.module,
-                cve=list(row.cve or []),
-                **_ai_fields(row.evidence),
-            )
-            for row in rows
-        ]
+        return [_finding_response(row) for row in rows]
+
+
+@app.get("/api/v1/findings/new")
+async def list_new_findings(
+    p: Principal = Depends(get_principal),
+    limit: int = 100,
+) -> list[FindingResponse]:
+    """Findings first seen in the most recent scan — the 'catch it early' delta."""
+    async with tenant_session(p.tenant_id) as session:
+        stmt = (
+            select(FindingRow)
+            .where(FindingRow.is_new.is_(True))
+            .where(FindingRow.status == "open")
+            .order_by(FindingRow.risk_score.desc())
+            .limit(limit)
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_finding_response(row) for row in rows]
 
 
 @app.get("/api/v1/findings/summary")
@@ -312,7 +339,22 @@ async def findings_summary(
         for bucket, count in rows:
             if bucket in out:
                 out[bucket] = count
-        return out
+        new_open = (
+            await session.execute(
+                select(func.count())
+                .select_from(FindingRow)
+                .where(FindingRow.is_new.is_(True))
+                .where(FindingRow.status == "open")
+            )
+        ).scalar_one()
+        fixed = (
+            await session.execute(
+                select(func.count())
+                .select_from(FindingRow)
+                .where(FindingRow.status == "fixed")
+            )
+        ).scalar_one()
+        return {**out, "new": int(new_open), "fixed": int(fixed)}
 
 
 @app.post("/api/v1/copilot/query")

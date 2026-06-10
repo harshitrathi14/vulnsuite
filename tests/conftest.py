@@ -29,8 +29,8 @@ from vulnsuite.core.schema import Evidence, Finding, Module, Severity
 def make_finding():
     def _make(module: Module, **kwargs) -> Finding:
         return Finding(
-            tenant_id=uuid4(),
-            asset_id=uuid4(),
+            tenant_id=kwargs.pop("tenant_id", uuid4()),
+            asset_id=kwargs.pop("asset_id", uuid4()),
             tool=kwargs.pop("tool", "test-tool"),
             module=module,
             title=kwargs.pop("title", "finding"),

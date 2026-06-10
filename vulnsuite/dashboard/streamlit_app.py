@@ -48,7 +48,8 @@ def load_findings(tenant_id: str) -> pd.DataFrame:
             text("""
                 SELECT finding_id, tool, module, title, severity,
                        cvss_base, epss, risk_score, risk_bucket,
-                       status, first_seen, last_seen, cve, evidence
+                       status, first_seen, last_seen, cve, evidence,
+                       is_new, scan_count, fixed_at
                 FROM findings
                 ORDER BY risk_score DESC
             """),
@@ -58,6 +59,8 @@ def load_findings(tenant_id: str) -> pd.DataFrame:
         return df
     # Flatten the Claude Fable 5 enrichment (Phase 3) into columns.
     raw = df["evidence"].map(_evidence_raw)
+    df["risk_escalated_by"] = raw.map(lambda r: r.get("risk_escalated_by") or [])
+    df["escalated"] = df["risk_escalated_by"].map(bool)
     df["ai_fp_likelihood"] = raw.map(lambda r: (r.get("ai_triage") or {}).get("fp_likelihood"))
     df["ai_exploitability"] = raw.map(lambda r: (r.get("ai_triage") or {}).get("exploitability"))
     df["ai_reasoning"] = raw.map(lambda r: (r.get("ai_triage") or {}).get("reasoning"))
@@ -109,24 +112,37 @@ except Exception as e:
 
 # ---------- KPI strip ----------
 
-buckets = df["risk_bucket"].value_counts().to_dict() if not df.empty else {}
-exploited_count = int(df["actively_exploited"].sum()) if not df.empty else 0
-col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+# open findings only for the live KPIs (auto-closed findings shouldn't inflate counts)
+open_df = df[df["status"] == "open"] if not df.empty else df
+buckets = open_df["risk_bucket"].value_counts().to_dict() if not open_df.empty else {}
+exploited_count = int(open_df["actively_exploited"].sum()) if not open_df.empty else 0
+new_count = int(open_df["is_new"].sum()) if not open_df.empty else 0
+fixed_count = int((df["status"] == "fixed").sum()) if not df.empty else 0
+
+col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
 col1.metric("P0 Critical", buckets.get("P0", 0))
 col2.metric("P1 High", buckets.get("P1", 0))
 col3.metric("P2 Medium", buckets.get("P2", 0))
 col4.metric("P3 Low", buckets.get("P3", 0))
-col5.metric("P4 Info", buckets.get("P4", 0))
-col6.metric("🔥 Exploited in Wild", exploited_count)
-col7.metric("Assets", len(assets_df))
+col5.metric("🆕 New", new_count)
+col6.metric("🔥 Exploited", exploited_count)
+col7.metric("✅ Fixed", fixed_count)
+col8.metric("Assets", len(assets_df))
 
-# ---------- live-threat banner ----------
+# ---------- new + live-threat banners ----------
+
+if new_count > 0:
+    st.warning(
+        f"🆕 **{new_count} new finding(s) since the last scan.** "
+        f"Newly-introduced exposure is what attackers look for first — triage the New "
+        f"tab before anything else."
+    )
 
 if exploited_count > 0:
     st.error(
-        f"🔥 **{exploited_count} finding(s) involve CVEs with ACTIVE in-the-wild "
-        f"exploitation** (live threat intel via Claude Fable 5). Patch these first — "
-        f"attackers are already using them."
+        f"🔥 **{exploited_count} open finding(s) involve CVEs with ACTIVE in-the-wild "
+        f"exploitation or CISA KEV listing** — risk auto-escalated to P0. Patch these "
+        f"first; attackers are already using them."
     )
 
 # ---------- CERT-In clock ----------
@@ -165,13 +181,21 @@ with tab1:
             st.dataframe(aging.rename("Avg age (days)"))
 
 with tab2:
-    st.subheader("Top 25 Risks")
-    if not df.empty:
-        top = df.head(25)[
-            ["risk_bucket", "risk_score", "actively_exploited", "kev_listed",
+    new_only = st.checkbox("Show only NEW findings (since last scan)", value=False)
+    view = open_df[open_df["is_new"]] if new_only else open_df
+    st.subheader(f"Top 25 {'New ' if new_only else ''}Open Risks")
+    if not view.empty:
+        top = view.head(25)[
+            ["risk_bucket", "risk_score", "is_new", "escalated",
+             "actively_exploited", "kev_listed",
              "tool", "module", "title", "severity", "cve"]
-        ].rename(columns={"actively_exploited": "🔥 exploited", "kev_listed": "KEV"})
+        ].rename(columns={
+            "is_new": "🆕", "escalated": "⬆️", "actively_exploited": "🔥",
+            "kev_listed": "KEV",
+        })
         st.dataframe(top, use_container_width=True)
+    else:
+        st.info("No findings match.")
 
 with tab3:
     st.subheader("Findings by Module")

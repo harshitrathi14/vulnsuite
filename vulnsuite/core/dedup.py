@@ -121,6 +121,11 @@ def _key_for(finding: Finding) -> tuple | None:
     return None
 
 
+def dedup_key(finding: Finding) -> tuple | None:
+    """Public accessor for the per-module dedup key (used by fingerprinting)."""
+    return _key_for(finding)
+
+
 def _merge_score(finding: Finding) -> tuple:
     evidence = (finding.evidence.raw or {}) if finding.evidence else {}
     has_fix = bool(evidence.get("fix_versions") or evidence.get("fixed_version"))

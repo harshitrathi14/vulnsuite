@@ -29,7 +29,15 @@ class _FakeOrchestrator:
         for finding in findings:
             if finding.risk_bucket in summary:
                 summary[finding.risk_bucket] += 1
-        return SimpleNamespace(summary=summary, persisted_count=len(findings), errors=errors)
+        return SimpleNamespace(
+            summary=summary,
+            persisted_count=len(findings),
+            new_count=len(findings),
+            reopened_count=0,
+            fixed_count=0,
+            findings_after_dedup=findings,
+            errors=errors,
+        )
 
 
 def _scan_result(tool: str, module: Module) -> ScanResult:

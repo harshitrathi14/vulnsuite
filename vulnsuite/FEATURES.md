@@ -212,3 +212,46 @@ outputs everywhere; Batches API at 50% price; prompt-cached frozen
 system prompts; server-side `web_search`/`web_fetch` with dynamic
 filtering (threat intel + copilot, which searches CVE IDs and product
 names only — never tenant data).
+
+---
+
+## 6. Phase 4 — Core Engine: Lifecycle, Real-World Escalation, Auto-Criticality
+
+Deterministic improvements to the detection engine itself — no model calls,
+all air-gap-safe.
+
+**1. Finding lifecycle tracking (cross-scan).** Every finding now carries a
+stable `fingerprint` (`core/fingerprint.py`) derived from its module/asset/
+location identity. `reconcile_findings` (`core/db.py`) replaces blind INSERTs:
+- New fingerprint → inserted, flagged `is_new`
+- Seen again → updated in place; `first_seen` persists, `last_seen` and
+  `scan_count` accumulate
+- Disappeared since last scan → **auto-closed** (`status=fixed`, `fixed_at` set)
+- Previously fixed, reappears → **reopened**
+- Analyst-owned statuses (`false_positive`, `accepted`) are never touched
+
+The scan result now reports `new` / `reopened` / `fixed` deltas. **New-since-
+last-scan is the catch-it-early signal** — surfaced as a dashboard KPI + banner,
+the `GET /api/v1/findings/new` endpoint, and `is_new` on every finding.
+
+**2. Real-world exploitation escalation.** CISA KEV is now a deterministic
+scoring input (`core/kev_provider.py` — public JSON feed, Redis-cached, with an
+offline mirror for air-gap). In `RiskEngine`:
+- KEV-listed CVE → risk floored to P0 at scan time
+- Live in-the-wild exploitation (from Fable 5 threat intel) → re-floored to P0
+  in the enrichment task
+
+Escalation is stamped in `evidence.raw["risk_escalated_by"]` and flows to the
+SIEM envelope (`risk_escalated`, `risk_escalated_by`) so SOC rules can alert on
+"formula said medium, the world says critical."
+
+**3. Asset auto-criticality.** `core/asset_rules.py` derives criticality and
+exposure from discovery tags (`env=prod`→5, `pci/pii`→+1, `internet-facing`→
+exposure 1.0), applied at `upsert_assets`. Rules only ever *raise* criticality,
+never override an analyst's explicit value. Configurable via
+`VULNSUITE_ASSETPOLICY_*`.
+
+> **Migration note:** Phase 4 adds columns (`fingerprint`, `is_new`,
+> `scan_count`, `fixed_at`) and a unique constraint on (`tenant_id`,
+> `fingerprint`). `init_db()` creates them on a fresh database; an existing
+> deployment needs an Alembic migration before first use.

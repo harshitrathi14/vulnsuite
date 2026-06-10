@@ -28,12 +28,10 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable, Protocol
 from uuid import UUID
 
-from sqlalchemy import insert
-
 from .schema import Asset, Finding, ScanResult, Module
 from .risk_engine import RiskEngine
 from .dedup import dedup_findings  # sibling module, separate turn
-from .db import FindingRow, tenant_session
+from .db import reconcile_findings
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +62,10 @@ class RunReport:
     scan_results: list[ScanResult] = field(default_factory=list)
     findings_after_dedup: list[Finding] = field(default_factory=list)
     persisted_count: int = 0
+    # Cross-scan lifecycle deltas (filled by reconcile_findings on persist)
+    new_count: int = 0          # findings never seen before this scan
+    reopened_count: int = 0     # previously-fixed findings that came back
+    fixed_count: int = 0        # findings that disappeared -> auto-closed
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -137,14 +139,25 @@ class Orchestrator:
             enriched = processor(enriched)
         report.findings_after_dedup = enriched
 
-        # 5) persist through tenant-scoped session (RLS does isolation)
+        # 5) reconcile through tenant-scoped session (RLS does isolation).
+        # Upserts by stable fingerprint, accumulates first/last_seen, and
+        # auto-closes findings that disappeared since the previous scan.
         if self.cfg.persist:
             try:
-                report.persisted_count = await self._persist(
-                    asset.tenant_id, enriched,
+                deltas = await reconcile_findings(
+                    asset.tenant_id, asset.asset_id, enriched,
+                )
+                report.persisted_count = deltas["total"]
+                report.new_count = deltas["new"]
+                report.reopened_count = deltas["reopened"]
+                report.fixed_count = deltas["fixed"]
+                logger.info(
+                    "asset=%s reconciled: new=%d reopened=%d fixed=%d total=%d",
+                    asset.asset_id, deltas["new"], deltas["reopened"],
+                    deltas["fixed"], deltas["total"],
                 )
             except Exception as e:  # noqa: BLE001
-                logger.exception("persist failed")
+                logger.exception("reconcile failed")
                 report.errors.append(f"persist: {e}")
 
         report.finished_at = datetime.now(timezone.utc)
@@ -174,25 +187,3 @@ class Orchestrator:
 
         results = await asyncio.gather(*[_one(c) for c in calls])
         return [r for r in results if r is not None]
-
-    async def _persist(
-        self, tenant_id: UUID, findings: list[Finding],
-    ) -> int:
-        if not findings:
-            return 0
-        rows = [self._to_row(f) for f in findings]
-        async with tenant_session(tenant_id) as session:
-            await session.execute(insert(FindingRow), rows)
-            await session.commit()
-        return len(rows)
-
-    @staticmethod
-    def _to_row(f: Finding) -> dict:
-        """Pydantic Finding -> dict matching FindingRow columns."""
-        d = f.model_dump(mode="json")
-        # Evidence is a Pydantic model; flatten to JSON-native dict.
-        d["evidence"] = (
-            f.evidence.model_dump(mode="json") if f.evidence else {}
-        )
-        # module/severity/status already serialized as strings by use_enum_values
-        return d

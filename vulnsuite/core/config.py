@@ -84,6 +84,7 @@ class ScanningSettings(BaseSettings):
     offline_mode: bool = False         # air-gapped BFSI deployments
     external_module_downloads: bool = False
     offline_epss_csv: Path | None = None
+    offline_kev_json: Path | None = None     # CISA KEV mirror for air-gapped escalation
     offline_trivy_db: Path | None = None
     offline_osv_db: Path | None = None
     offline_semgrep_rules: Path | None = None
@@ -128,6 +129,37 @@ class SupplyChainSettings(BaseSettings):
     # If set, also run `cosign verify-attestation` and require this predicate type.
     # Common values: "slsaprovenance", "cyclonedx", "spdx".
     require_attestation_type: str | None = None
+
+
+class AssetPolicySettings(BaseSettings):
+    """Tag-driven asset criticality/exposure (applied at discovery)."""
+    model_config = SettingsConfigDict(env_prefix="VULNSUITE_ASSETPOLICY_")
+
+    auto_criticality: bool = True
+    prod_tags: list[str] = Field(
+        default_factory=lambda: ["prod", "production", "prd"]
+    )
+    staging_tags: list[str] = Field(
+        default_factory=lambda: ["staging", "stage", "stg", "uat", "preprod", "pre-prod"]
+    )
+    dev_tags: list[str] = Field(
+        default_factory=lambda: ["dev", "development", "sandbox", "test", "qa", "demo"]
+    )
+    sensitive_tags: list[str] = Field(
+        default_factory=lambda: ["pii", "pci", "phi", "financial", "payments", "confidential"]
+    )
+    internet_tags: list[str] = Field(
+        default_factory=lambda: ["internet", "public", "external", "internet-facing", "dmz"]
+    )
+
+
+class RiskSettings(BaseSettings):
+    """Deterministic risk escalation thresholds (CISA KEV / live exploitation)."""
+    model_config = SettingsConfigDict(env_prefix="VULNSUITE_RISK_")
+
+    escalation_enabled: bool = True
+    kev_floor_score: float = 7.0            # KEV-listed -> at least this score (7.0 = P0)
+    active_exploit_floor_score: float = 7.0  # live in-the-wild exploitation -> at least P0
 
 
 class AISettings(BaseSettings):
@@ -230,6 +262,8 @@ class Settings(BaseSettings):
     asm: ASMSettings = Field(default_factory=ASMSettings)
     api_security: APISecuritySettings = Field(default_factory=APISecuritySettings)
     supply_chain: SupplyChainSettings = Field(default_factory=SupplyChainSettings)
+    asset_policy: AssetPolicySettings = Field(default_factory=AssetPolicySettings)
+    risk: RiskSettings = Field(default_factory=RiskSettings)
     ai: AISettings = Field(default_factory=AISettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     compliance: ComplianceSettings = Field(default_factory=ComplianceSettings)
