@@ -130,6 +130,48 @@ class SupplyChainSettings(BaseSettings):
     require_attestation_type: str | None = None
 
 
+class AISettings(BaseSettings):
+    """Claude Fable 5 enrichment layer (Phase 3).
+
+    OFF by default: BFSI deployments must opt in, because enrichment
+    sends redacted finding metadata to the Anthropic API. The layer is
+    force-disabled whenever scanning.offline_mode is set (air-gap),
+    regardless of these flags — see ai/client.ai_active().
+    """
+    model_config = SettingsConfigDict(env_prefix="VULNSUITE_AI_")
+
+    enabled: bool = False
+    model: str = "claude-fable-5"
+    api_key: SecretStr | None = None          # falls back to ANTHROPIC_API_KEY env
+    request_timeout_seconds: float = 180.0
+
+    # Per-feature switches (only honoured when enabled=True)
+    triage_enabled: bool = True
+    remediation_enabled: bool = True
+    correlation_enabled: bool = True
+    compliance_enabled: bool = True
+    narrative_enabled: bool = True
+    copilot_enabled: bool = True
+    dedup_assist_enabled: bool = False         # suggestions-only; opt-in
+
+    # Cost/latency shaping
+    use_batches: bool = True                   # Batches API (50% price) for big scans
+    batch_threshold: int = 50                  # findings above this go via batches
+    max_findings_per_call: int = 40
+    max_correlation_findings: int = 300        # cap for the single attack-chain call
+    remediation_buckets: list[str] = Field(default_factory=lambda: ["P0", "P1"])
+    max_snippet_chars: int = 2000
+    copilot_max_turns: int = 8
+
+    # Fable 5 effort per feature: low|medium|high|xhigh|max
+    triage_effort: str = "low"
+    remediation_effort: str = "medium"
+    correlation_effort: str = "high"
+    compliance_effort: str = "low"
+    narrative_effort: str = "medium"
+    copilot_effort: str = "medium"
+
+
 class AuthSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="VULNSUITE_AUTH_")
     oidc_issuer: str | None = None
@@ -179,6 +221,7 @@ class Settings(BaseSettings):
     asm: ASMSettings = Field(default_factory=ASMSettings)
     api_security: APISecuritySettings = Field(default_factory=APISecuritySettings)
     supply_chain: SupplyChainSettings = Field(default_factory=SupplyChainSettings)
+    ai: AISettings = Field(default_factory=AISettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     compliance: ComplianceSettings = Field(default_factory=ComplianceSettings)
     reporting: ReportingSettings = Field(default_factory=ReportingSettings)

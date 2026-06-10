@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
+from ..ai.client import AIEnrichmentError, ai_active
 from ..core.config import get_settings
 from ..core.db import AssetRow, FindingRow, init_db, tenant_session
 from ..core.schema import Asset, AssetType, ExposureFactor, ScanTargets
@@ -105,6 +106,10 @@ class DomainDiscoveryRequest(BaseModel):
 
 class KubernetesDiscoveryRequest(BaseModel):
     kubeconfig_path: str | None = None
+
+
+class CopilotRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
 
 
 class FindingResponse(BaseModel):
@@ -290,6 +295,30 @@ async def findings_summary(
             if bucket in out:
                 out[bucket] = count
         return out
+
+
+@app.post("/api/v1/copilot/query")
+async def copilot_query(
+    req: CopilotRequest,
+    p: Principal = Depends(require_role("admin", "analyst", "viewer", "auditor")),
+) -> dict:
+    """Natural-language questions over the tenant's findings (Claude Fable 5).
+
+    The copilot only sees read-only, tenant-scoped query tools; it never
+    composes SQL and RLS remains the isolation boundary.
+    """
+    if not ai_active() or not settings.ai.copilot_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI copilot is disabled (VULNSUITE_AI_ENABLED / offline mode)",
+        )
+    from ..ai import copilot
+
+    try:
+        result = await copilot.ask(p.tenant_id, req.question)
+    except AIEnrichmentError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"answer": result.answer, "tool_calls": result.tool_calls}
 
 
 @app.post("/api/v1/reports", status_code=202)

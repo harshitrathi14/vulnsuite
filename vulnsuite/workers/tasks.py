@@ -36,9 +36,10 @@ from ..collectors.secrets.trufflehog import TruffleHogCollector
 from ..collectors.supply_chain.cosign import CosignCollector, CosignPolicy
 from ..collectors.supply_chain.syft import SyftCollector
 from ..collectors.supply_chain.vex import VEXProcessor
+from ..ai.client import AIEnrichmentError, ai_active
 from ..compliance.certin_export import build_incident_report, write_report
 from ..core.config import get_settings
-from ..core.db import upsert_assets
+from ..core.db import FindingRow, tenant_session, upsert_assets
 from ..core.epss_provider import build_default_provider
 from ..core.orchestrator import CollectorCall, Orchestrator, OrchestratorConfig
 from ..core.risk_engine import RiskEngine
@@ -353,11 +354,27 @@ def scan_asset(
                     )
 
             report = await orch.run(asset, calls, post_processors=post_processors)
+
+            # Phase 3: hand off to AI enrichment asynchronously. The scan
+            # result is already persisted; enrichment updates evidence
+            # in place and must never delay or fail the scan itself.
+            ai_task_id: str | None = None
+            if ai_active() and report.findings_after_dedup:
+                ai_task = ai_enrich_findings.delay(
+                    tenant_id=str(asset.tenant_id),
+                    asset_json=asset.model_dump(mode="json"),
+                    findings_json=[
+                        f.model_dump(mode="json") for f in report.findings_after_dedup
+                    ],
+                )
+                ai_task_id = getattr(ai_task, "id", None)
+
             return {
                 "asset_id": str(asset.asset_id),
                 "summary": report.summary,
                 "persisted": report.persisted_count,
                 "errors": report.errors,
+                "ai_enrichment_task": ai_task_id,
             }
         finally:
             for path in temp_sboms:
@@ -369,6 +386,89 @@ def scan_asset(
     except Exception as exc:  # noqa: BLE001
         logger.exception("scan_asset failed")
         raise self.retry(exc=exc, countdown=60)
+
+
+async def _persist_evidence_updates(tenant_id: UUID, findings: list[Finding]) -> int:
+    """Write AI-annotated evidence back to rows that gained ai_* keys."""
+    from sqlalchemy import update
+
+    count = 0
+    async with tenant_session(tenant_id) as session:
+        for f in findings:
+            raw = f.evidence.raw or {}
+            if not any(key.startswith("ai_") for key in raw):
+                continue
+            await session.execute(
+                update(FindingRow)
+                .where(FindingRow.finding_id == f.finding_id)
+                .values(evidence=f.evidence.model_dump(mode="json"))
+            )
+            count += 1
+        await session.commit()
+    return count
+
+
+@shared_task(name="vulnsuite.workers.tasks.ai_enrich_findings", bind=True, max_retries=1)
+def ai_enrich_findings(
+    self,
+    tenant_id: str,
+    asset_json: dict | None,
+    findings_json: list[dict],
+) -> dict:
+    """Phase 3 AI enrichment: triage -> remediation -> attack chains ->
+    RBI mapping -> dedup suggestions, then persist evidence updates.
+
+    Every stage degrades to a no-op on failure; the task only retries
+    on unexpected infrastructure errors (DB down), never on model errors.
+    """
+    from ..ai.compliance import map_findings_rbi
+    from ..ai.correlate import correlate_findings
+    from ..ai.dedup_assist import suggest_merges
+    from ..ai.remediate import remediate_findings
+    from ..ai.triage import (
+        apply_triage_batch,
+        submit_triage_batches,
+        triage_findings,
+        wait_for_batch,
+    )
+
+    if not ai_active():
+        return {"status": "disabled"}
+
+    findings = [Finding(**f) for f in findings_json]
+    asset = Asset(**asset_json) if asset_json else None
+    if not findings:
+        return {"status": "empty"}
+
+    ai_cfg = settings.ai
+
+    # 1) Triage — Batches API (50% price) for full-scan volumes
+    if ai_cfg.triage_enabled:
+        if ai_cfg.use_batches and len(findings) > ai_cfg.batch_threshold:
+            try:
+                batch_id = submit_triage_batches(findings, asset)
+                if wait_for_batch(batch_id):
+                    findings = apply_triage_batch(batch_id, findings)
+                else:
+                    logger.warning("triage batch %s did not finish in window", batch_id)
+            except AIEnrichmentError as exc:
+                logger.warning("triage batch path failed: %s", exc)
+        else:
+            findings = triage_findings(findings, asset)
+
+    # 2-5) remaining stages each degrade independently
+    findings = remediate_findings(findings, asset)
+    findings = correlate_findings(findings, asset)
+    findings = map_findings_rbi(findings)
+    findings = suggest_merges(findings)
+
+    try:
+        updated = _run_async(_persist_evidence_updates(UUID(tenant_id), findings))
+    except Exception as exc:  # noqa: BLE001 - infra failure: worth a retry
+        logger.exception("ai enrichment persist failed")
+        raise self.retry(exc=exc, countdown=120)
+
+    return {"status": "ok", "findings": len(findings), "updated": updated}
 
 
 @shared_task(name="vulnsuite.workers.tasks.discover_assets")
@@ -448,6 +548,7 @@ def generate_report(
     findings_json: list[dict],
     asset_names: dict[str, str],
 ) -> str:
+    from ..ai.narrate import certin_narrative, executive_summary, render_summary_text
     from ..reporting.pdf_report import PDFReportGenerator, ReportMetadata
 
     findings = [Finding(**finding) for finding in findings_json]
@@ -462,7 +563,13 @@ def generate_report(
     out_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = out_dir / f"vulnsuite_{tenant_id}_{datetime.now(timezone.utc):%Y%m%d%H%M%S}.pdf"
 
-    PDFReportGenerator().render(findings, asset_names, meta, pdf_path)
+    # AI executive briefing (returns None when the AI layer is off/unavailable)
+    ai_summary_text: str | None = None
+    summary = executive_summary(findings, tenant_name)
+    if summary is not None:
+        ai_summary_text = render_summary_text(summary)
+
+    PDFReportGenerator().render(findings, asset_names, meta, pdf_path, ai_summary=ai_summary_text)
 
     incident = build_incident_report(
         findings,
@@ -472,6 +579,14 @@ def generate_report(
         contact_phone="+91-0000000000",
     )
     if incident:
+        narrative = certin_narrative(incident, tenant_id)
+        if narrative:
+            incident["ai_draft_narrative"] = {
+                "text": narrative,
+                "model": settings.ai.model,
+                "note": "AI-generated draft — human review and sign-off required "
+                "before any regulatory submission",
+            }
         write_report(incident, out_dir)
 
     return str(pdf_path)

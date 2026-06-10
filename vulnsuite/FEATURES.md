@@ -161,3 +161,33 @@ Phase 1 was Azure-first; Phase 2 brings the other two hyperscalers up to feature
 4. **Air-gap is a first-class mode**, not a retrofit — every online dependency has a documented offline path.
 5. **Risk math over severity math.** CVSS alone produces 20k criticals; CVSS × EPSS × business context produces ~50 actionable P0s.
 6. **Findings are actionable, not just alerts.** Curated, library-specific remediation text ships with every finding from Bandit, Dockle, testssl, and TruffleHog.
+
+---
+
+## 5. Phase 3 — AI Enrichment (Claude Fable 5)
+
+Every capability is **advisory and additive**: AI verdicts ride inside
+`evidence.raw["ai_*"]`; deterministic scores, buckets, and statuses stay
+authoritative. The layer is **off by default** (`VULNSUITE_AI_ENABLED=true`
+to opt in) and force-disabled in air-gap mode regardless of flags.
+
+| Capability | Module | What it does |
+|---|---|---|
+| AI Triage | `ai/triage.py` | Per-finding false-positive likelihood, calibrated confidence, evidence-based exploitability. Batches API (50% price) above 50 findings. |
+| Remediation Plans | `ai/remediate.py` | Concrete steps + patch diffs + validation commands for P0/P1 findings. |
+| Attack-Chain Correlation | `ai/correlate.py` | Feeds the asset's full finding set into one high-effort call; surfaces multi-finding attack paths the independent risk formula cannot see. |
+| RBI CSF Mapping | `ai/compliance.py` | Control mapping with per-control rationale; deterministic heuristic remains the fallback. |
+| Report Narratives | `ai/narrate.py` | Board-level executive briefing in the PDF; CERT-In incident draft (human sign-off gate unchanged). |
+| Security Copilot | `ai/copilot.py` + `POST /api/v1/copilot/query` | Natural-language questions over findings via read-only, RLS-scoped query tools — the model never writes SQL. |
+| Dedup Assist | `ai/dedup_assist.py` | Merge *suggestions* for unkeyed modules (network/cloud/discovery); never auto-merges. Opt-in. |
+
+**Guardrails (non-configurable):**
+- `ai/redaction.py` masks secret material (AWS keys, PEM blocks, JWTs,
+  tokens, URL credentials, password assignments) before any byte leaves
+  the boundary; SECRETS-module evidence is force-masked.
+- Every request is tenant-tagged; tenants are never mixed in one call.
+- Every stage degrades to a no-op on failure — findings always flow.
+
+**Pipeline:** `scan_asset` → persist → enqueue `ai_enrich_findings`
+(queue `vulnsuite.ai`) → triage → remediate → correlate → map → suggest →
+evidence updates written back under RLS.

@@ -35,6 +35,9 @@ celery_app.conf.update(
         "vulnsuite.workers.tasks.discover_domains": {"queue": "vulnsuite.discovery"},
         "vulnsuite.workers.tasks.discover_kubernetes_clusters": {"queue": "vulnsuite.discovery"},
         "vulnsuite.workers.tasks.generate_report": {"queue": "vulnsuite.report"},
+        # AI enrichment is long-running (Batches API polling) and must
+        # never compete with scan workers for slots.
+        "vulnsuite.workers.tasks.ai_enrich_findings": {"queue": "vulnsuite.ai"},
     },
     beat_schedule={
         "daily-azure-discovery": {

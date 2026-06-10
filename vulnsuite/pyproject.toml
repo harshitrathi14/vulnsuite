@@ -66,6 +66,10 @@ dependencies = [
     "pip-audit>=2.7",
     "semgrep>=1.70",
 
+    # AI enrichment (Claude Fable 5) — optional at runtime: the suite
+    # degrades to deterministic-only when the SDK or API is unavailable
+    "anthropic>=0.84",
+
     # Observability
     "structlog>=24.1",
 ]
