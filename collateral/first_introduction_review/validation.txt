@@ -1,0 +1,26 @@
+VulnSuite introductory collateral review
+Date: 19 October 2026
+
+Content
+- 19 slides; the proposed pilot slide is excluded.
+- Each slide includes a three-line feature explanation and structured bullets.
+- 145 native PowerPoint bullet paragraphs; bullet XML order corrected so the
+  bullet symbols render in Microsoft PowerPoint.
+- PPT, notes, metadata, TXT/HTML email and LinkedIn draft introduce the full
+  suite without enhancement, previous-version or pilot framing.
+- Email formats contain the same 20 bullet items.
+- Windows/Linux monitoring and approved containment coverage are explicit.
+- Native Windows ACL, firewall, expiry and recovery staging limits are retained.
+- Software version and historical validation records are unchanged.
+
+Artifact verification
+- Both PPT filenames contain identical bytes.
+- Companion PDF contains 19 pages, generated from the same source content.
+- Microsoft PowerPoint rendered all 19 slides to PNG for visual inspection.
+- All 190 native text boxes fit their bounds; no overflow reported.
+- Native-render contact sheet and selected full-size slides visually inspected.
+- Feature descriptions fit three lines in the generator's layout check.
+- Collateral-only change; application tests were not rerun. Existing evidence
+  records 348 automated tests and seven narrow native Windows file checks.
+- Prior user files, including the 19-slide edited deck, are archived locally.
+- Email and LinkedIn content are drafts; neither was sent or posted.

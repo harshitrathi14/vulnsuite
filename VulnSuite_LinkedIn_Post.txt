@@ -1,0 +1,19 @@
+Introducing VulnSuite: vulnerability assessment, server monitoring and approved security response in one suite.
+
+For teams protecting applications, APIs and internal infrastructure, the aim is straightforward: bring security findings and host activity into a shared view, with clear ownership and review before containment.
+
+VulnSuite brings together:
+
+• Vulnerability assessment: identify vulnerabilities and configuration issues across applications, APIs, cloud resources, containers and code.
+• Windows and Linux monitoring: collect configured telemetry for process activity, known-bad file hashes and selected lateral-movement patterns.
+• WAF integration: connect web attack signals with investigations and support approved blocks through configured integrations.
+• Approved containment: use role permissions, separate-actor approval and local host policy for supported file quarantine, host isolation and recovery workflows.
+• SOC operations: manage enrolled hosts, incidents, assignments, response approvals and audit history through a central console.
+
+Verification includes 348 automated tests and seven narrowly scoped native Windows file-operation checks. Deployment requires environment-specific staging, including validation of telemetry coverage, permissions, containment and recovery.
+
+The focus is practical: help analysts understand what happened, identify affected systems and take accountable action.
+
+I’d welcome feedback from security teams evaluating vulnerability management and internal server protection workflows.
+
+#CyberSecurity #VulnerabilityManagement #ServerSecurity #SecurityOperations #VulnSuite
