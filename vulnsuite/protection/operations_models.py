@@ -75,7 +75,8 @@ class SuppressionCreate(StrictModel):
 
 
 class PlaybookRequest(StrictModel):
-    action: Literal['quarantine_file','restore_file','isolate_host','release_host','cloud_waf_block']
+    action: Literal['quarantine_file','restore_file','isolate_host','release_host','cloud_waf_block',
+                    'terminate_process']
     alert_id: int = Field(gt=0)
     duration_seconds: int = Field(default=300, ge=60, le=3600)
     previous_job_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
@@ -83,6 +84,7 @@ class PlaybookRequest(StrictModel):
 
 
 class PlaybookReceipt(StrictModel):
-    detail: Literal['quarantined','restored','isolated','isolation_released','policy_denied','execution_failed'] | None = None
+    detail: Literal['quarantined','restored','isolated','isolation_released','process_terminated',
+                    'process_absent','policy_denied','execution_failed'] | None = None
     status: Literal['applied','failed','rolled_back']
     result: dict = Field(default_factory=dict)

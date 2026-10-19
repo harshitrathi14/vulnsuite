@@ -21,10 +21,15 @@
     "hosts": {
       "server-a": {
         "enabled": false,
-        "allowed_actions": ["quarantine_file", "restore_file", "isolate_host", "release_host"],
+        "allowed_actions": ["quarantine_file", "restore_file", "isolate_host", "release_host", "terminate_process"],
         "isolation": {
           "management_networks": ["10.10.0.5/32"],
           "management_ports": [22, 443]
+        },
+        "termination": {
+          "grace_seconds": 2,
+          "allow_privileged": false,
+          "protected_executables": ["/usr/sbin/nginx", "/usr/sbin/php-fpm8.2"]
         }
       }
     }

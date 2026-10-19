@@ -188,6 +188,19 @@ Supported playbooks:
   provider-evaluated fixed expiry, so failed cleanup cannot turn the temporary block
   into permanent enforcement. The durable worker reconciles and removes expired
   managed rules; retries do not extend the approved expiry.
+- `terminate_process`: only alerts that evidence a PID (`web_server_shell`,
+  `writable_directory_execution`, `deleted_executable`, or a `malware_detected`
+  hit from the running-process scan). The plan pins PID, executable and, where the
+  agent observed it, the procfs start ticks; otherwise the alert time bounds the
+  identity. On Linux the agent opens a pidfd, re-reads the identity behind that PID
+  and signals through the pidfd (SIGTERM, then SIGKILL after `grace_seconds`,
+  default 2), so a recycled PID is reported `process_absent` rather than killed.
+  Windows opens one handle for the image, creation-time, terminate and exit-wait
+  calls. init/systemd/sshd and core Windows system processes are never targets;
+  `response_policy.termination.protected_executables` extends that list locally,
+  and root-owned Linux processes need `allow_privileged: true`. Termination is not
+  reversible and has no rollback playbook; it does not remove the file (use
+  `quarantine_file`) or stop a respawning parent (use `isolate_host`).
 
 Local responses are delivered only to the matching active host credential and
 independently checked against `response_policy` on that host. Result receipts must
@@ -198,7 +211,8 @@ for exact configuration.
 
 Windows configuration and its precise management-port exceptions are documented in
 the [Windows deployment guide](../../deploy/protection/windows/README.md). Quarantine
-does not terminate processes. Before native execution the agent saves an uncertain
+does not terminate processes; request `terminate_process` separately when the file
+is still running. Before native execution the agent saves an uncertain
 receipt; a crash therefore reports failure instead of replaying a privileged action.
 Review local evidence and use a separately approved rollback for uncertain outcomes.
 

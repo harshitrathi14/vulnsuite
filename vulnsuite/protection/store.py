@@ -140,7 +140,7 @@ class Store(OperationsMixin):
                 if event.kind == "malware_detection":
                     rules.append(("malware_detected", "critical", json.dumps({
                         "path": event.path, "engine": event.engine, "signature": event.signature,
-                        "sha256": event.sha256, "pid": event.pid})))
+                        "sha256": event.sha256, "pid": event.pid, "start_ticks": event.start_ticks})))
                 if event.kind == "waf_match":
                     rules.append(("waf_rule_match", "high", json.dumps({
                         "rule_ids": event.rule_ids, "action": event.waf_action})))

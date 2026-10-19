@@ -249,6 +249,22 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
                     from .playbooks import prepare_isolation
                 try: plan=prepare_isolation(policy.get('isolation',{}),data.duration_seconds,identifier,now=now)
                 except ValueError as exc: raise HTTPException(403,'isolation policy invalid') from exc
+            elif data.action=='terminate_process':
+                from .process_response import TERMINATION_RULES, prepare_termination
+                if not policy.get('enabled') or 'terminate_process' not in policy.get('allowed_actions',[]):
+                    raise HTTPException(403,'process termination disabled')
+                if alert['rule'] not in TERMINATION_RULES or not evidence.get('pid') or not (evidence.get('executable') or evidence.get('path')):
+                    raise HTTPException(409,'termination needs process evidence (pid and executable)')
+                # The alert time bounds the identity check on hosts without start ticks.
+                process={'pid':evidence['pid'],'executable':evidence.get('executable') or evidence.get('path'),
+                         'start_ticks':evidence.get('start_ticks'),'observed_at':int(alert['created'])}
+                try:
+                    if target_platform=='windows':
+                        from .windows_process import prepare_windows_termination
+                        plan=prepare_windows_termination(policy.get('termination',{}),process,identifier,now=now)
+                    else:
+                        plan=prepare_termination(policy.get('termination',{}),process,identifier,now=now)
+                except ValueError as exc: raise HTTPException(403,'termination denied by policy') from exc
             else:
                 previous=db.execute("SELECT * FROM response_jobs WHERE id=? AND host=? AND status IN ('applied','failed')",
                                     (data.previous_job_id,alert['host'])).fetchone()
@@ -303,9 +319,11 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
             row=db.execute('SELECT * FROM response_jobs WHERE id=? AND host=? AND action!=?',(identifier,host,'cloud_waf_block')).fetchone()
             if not row: raise HTTPException(404,'job not found')
             expected = {'quarantine_file': ('applied','quarantined'), 'restore_file': ('rolled_back','restored'),
-                        'isolate_host': ('applied','isolated'), 'release_host': ('rolled_back','isolation_released')}
+                        'isolate_host': ('applied','isolated'), 'release_host': ('rolled_back','isolation_released'),
+                        'terminate_process': ('applied','process_terminated')}
+            failures = ('policy_denied','execution_failed') + (('process_absent',) if row['action']=='terminate_process' else ())
             if data.status == 'failed':
-                if data.detail not in ('policy_denied','execution_failed'): raise HTTPException(422,'invalid failed receipt')
+                if data.detail not in failures: raise HTTPException(422,'invalid failed receipt')
             elif (data.status,data.detail) != expected.get(row['action']):
                 raise HTTPException(422,'receipt does not match approved action')
             if data.result.get('status',data.status) != data.status or data.result.get('detail',data.detail) != data.detail:

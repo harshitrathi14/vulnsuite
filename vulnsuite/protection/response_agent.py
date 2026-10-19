@@ -40,7 +40,7 @@ def execute_playbook(config: dict, command: dict) -> dict:
         deadline = plan["expires_at"]
         if type(deadline) not in (float, int) or not math.isfinite(deadline) or not time.time() < deadline <= time.time() + 3600:
             raise ValueError("dispatch deadline expired or invalid")
-        if action in ("quarantine_file", "isolate_host") and UUID(plan["request_id"]) != UUID(command["id"]):
+        if action in ("quarantine_file", "isolate_host", "terminate_process") and UUID(plan["request_id"]) != UUID(command["id"]):
             raise ValueError("job identifier mismatch")
         if platform == 'windows':
             from .windows_quarantine import WindowsQuarantine
@@ -59,6 +59,14 @@ def execute_playbook(config: dict, command: dict) -> dict:
         elif action == "release_host":
             result = (release_windows_isolation(policy['isolation'], plan['request_id']) if platform == 'windows'
                       else release_isolation(plan["request_id"]))
+        elif action == "terminate_process":
+            # Not reversible: the host re-verifies the process identity before signalling.
+            if platform == 'windows':
+                from .windows_process import terminate_windows_process
+                result = terminate_windows_process(policy.get('termination', {}), plan)
+            else:
+                from .process_response import terminate_process
+                result = terminate_process(policy.get('termination', {}), plan)
         else:
             raise ValueError("unsupported local action")
         return {"status": result["status"], "detail": result["detail"], "result": {**result, 'platform': platform}}

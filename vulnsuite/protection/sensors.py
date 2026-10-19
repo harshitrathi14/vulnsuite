@@ -110,7 +110,7 @@ def process_events(config, state, proc_root='/proc', max_events=500):
                 if digest in known_bad and marker not in observed and len(events) < max_events:
                     events.append({'kind': 'malware_detection', 'engine': 'sha256',
                                    'signature': known_bad[digest], 'sha256': digest,
-                                   'pid': int(directory.name), 'path': executable})
+                                   'pid': int(directory.name), 'start_ticks': start, 'path': executable})
                     observed.add(marker)
             current[key] = sorted(observed)
         except (FileNotFoundError, ProcessLookupError):
