@@ -1,0 +1,26 @@
+# Log and audit-trail tamper evidence. Review on a staging host first.
+#
+# Each rule records successful writes/attribute changes to a log location by any
+# process other than its legitimate writer; the agent turns the tagged SYSCALL
+# plus PATH records into one `log_tamper` event (executable, PID, audit uid,
+# path). Adjust writer paths to your distribution (rsyslogd vs syslog-ng,
+# journald location) and add `-F exe!=` entries for approved log shippers.
+# The agent-side `tamper_ignore_executables` list can silence a known writer
+# without reloading audit policy.
+#
+# Authentication and system logs
+-a always,exit -F arch=b64 -F dir=/var/log/ -F perm=wa -F exe!=/usr/sbin/rsyslogd -F exe!=/usr/lib/systemd/systemd-journald -F exe!=/usr/sbin/logrotate -F exe!=/sbin/auditd -k vulnsuite_log_tamper
+-a always,exit -F arch=b32 -F dir=/var/log/ -F perm=wa -F exe!=/usr/sbin/rsyslogd -F exe!=/usr/lib/systemd/systemd-journald -F exe!=/usr/sbin/logrotate -F exe!=/sbin/auditd -k vulnsuite_log_tamper
+# Login records (wtmp/btmp/lastlog live under /var/log on most distributions; add
+# /var/run/utmp explicitly)
+-w /var/run/utmp -p wa -k vulnsuite_log_tamper
+# Audit and logging configuration
+-w /etc/audit/ -p wa -k vulnsuite_log_tamper
+-w /etc/rsyslog.conf -p wa -k vulnsuite_log_tamper
+-w /etc/rsyslog.d/ -p wa -k vulnsuite_log_tamper
+-w /etc/systemd/journald.conf -p wa -k vulnsuite_log_tamper
+-w /etc/logrotate.conf -p wa -k vulnsuite_log_tamper
+-w /etc/logrotate.d/ -p wa -k vulnsuite_log_tamper
+# Audit control binaries
+-w /sbin/auditctl -p x -k vulnsuite_log_tamper
+-w /sbin/auditd -p x -k vulnsuite_log_tamper

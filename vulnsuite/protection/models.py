@@ -13,7 +13,14 @@ class Event(BaseModel):
     event_id: UUID = Field(default_factory=uuid4)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     kind: Literal["auth_failure", "auth_success", "file_change", "api_denied", "heartbeat",
-                  "process_alert", "malware_detection", "waf_match", "sensor_status", "process_start"]
+                  "process_alert", "malware_detection", "waf_match", "sensor_status", "process_start",
+                  "log_tamper"]
+    # Per-agent monotonic counter assigned when the event enters the durable outbox;
+    # the service alerts on gaps (lost or removed events) and on resets (replaced state).
+    sequence: int | None = Field(default=None, ge=1, le=2**53)
+    # Log and audit-trail tampering evidence (host log files, auditd, Windows event log).
+    tamper: Literal["truncated", "deleted", "replaced", "written", "attributes",
+                    "cleared", "audit_policy_changed", "audit_stopped"] | None = None
     source_ip: str | None = None
     user: str | None = Field(default=None, max_length=128)
     path: str | None = Field(default=None, max_length=1024)
@@ -70,6 +77,8 @@ class Event(BaseModel):
             raise ValueError("invalid WAF rule ID")
         if self.kind == "sensor_status" and (not self.sensor or not self.sensor_status or not self.sensor_detail):
             raise ValueError("sensor status required")
+        if self.kind == "log_tamper" and not self.tamper:
+            raise ValueError("tamper evidence required")
         return self
 
     @field_validator("source_ip")

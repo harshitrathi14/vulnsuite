@@ -270,10 +270,56 @@ def monitor_health(database, stale_seconds=120, grace_seconds=300, actor='mainte
     return result
 
 
+def verify_chain(database, host=None, actor='maintenance', now=None):
+    """Recompute each host's event hash chain and compare it with the stored head.
+
+    Every accepted event stores sha256(previous_link + payload). Retention may drop
+    the oldest events, so the first retained link is taken as the anchor; any
+    modified, removed or reordered event after it breaks the recomputation, and a
+    removed tail no longer matches the stored head. Compare the head with the last
+    externally delivered `telemetry.checkpoint` for tamper evidence that does not
+    rely on this database.
+    """
+    from .store import Store
+    now = time.time() if now is None else now
+    results = {}
+    with _database(database) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='telemetry_chain'").fetchone():
+            raise ValueError('database has no telemetry chain yet')
+        hosts = [host] if host else [r[0] for r in db.execute('SELECT host FROM telemetry_chain ORDER BY host')]
+        for name in hosts:
+            stored = db.execute('SELECT * FROM telemetry_chain WHERE host=?', (name,)).fetchone()
+            link, count, broken, unchained = None, 0, None, 0
+            for row in db.execute('SELECT rowid,payload,chain FROM events WHERE host=? ORDER BY rowid', (name,)):
+                if row['chain'] is None:
+                    unchained += 1  # recorded before chaining existed
+                    continue
+                if link is None:
+                    link = row['chain']
+                elif Store.chain_link(link, row['payload']) != row['chain']:
+                    broken = row['rowid']
+                    break
+                else:
+                    link = row['chain']
+                count += 1
+            head_matches = stored is not None and link == stored['head']
+            results[name] = {'events_verified': count, 'events_unchained': unchained,
+                             'broken_at_rowid': broken, 'head_matches': head_matches,
+                             'stored_count': stored['count'] if stored else None,
+                             'last_checkpoint_at': stored['checkpoint_at'] if stored else None,
+                             'verified': broken is None and head_matches}
+        with db:
+            _audit(db, 'telemetry_chain_verified', actor, results, now)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--actor', default=getpass.getuser())
     commands = parser.add_subparsers(dest='command', required=True)
+    chain = commands.add_parser('verify-chain', help='recompute the per-host telemetry hash chain')
+    chain.add_argument('--database', required=True)
+    chain.add_argument('--host')
     backup = commands.add_parser('backup')
     backup.add_argument('--database', required=True)
     backup.add_argument('--target', required=True)
@@ -299,6 +345,8 @@ def main():
         result = restore_database(args.backup, args.target, args.sha256, args.actor)
     elif args.command == 'prune':
         result = prune(args.database, args.event_days, args.alert_days, args.delivery_days, args.apply, args.actor)
+    elif args.command == 'verify-chain':
+        result = verify_chain(args.database, args.host, args.actor)
     else:
         config = json.loads(Path(args.config).read_text()) if args.config else {}
         if args.config and Path(config['database']).resolve() != Path(args.database).resolve():

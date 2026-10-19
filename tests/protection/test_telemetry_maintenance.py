@@ -50,7 +50,7 @@ def test_retention_preview_then_preserves_incident_response_evidence_and_audit(t
         for n in range(1, 5):
             at = old + n * 1000
             item = Event(kind='heartbeat', occurred_at=datetime.fromtimestamp(at, timezone.utc))
-            db.execute('INSERT INTO events VALUES(?,?,?,?,?,?,?)', ('a', str(item.event_id), at, at, item.kind, None, item.model_dump_json()))
+            db.execute('INSERT INTO events(host,id,received,occurred,kind,ip,payload) VALUES(?,?,?,?,?,?,?)', ('a', str(item.event_id), at, at, item.kind, None, item.model_dump_json()))
             db.execute('INSERT INTO alerts VALUES(?,?,?,?,?,?,?,?)',
                        (n, 'a', 'fixture', None, 'high', at, str(item.event_id), '{}'))
         db.execute("INSERT INTO incidents VALUES('i','investigation','alice','open','high',?,?,1)", (old, old))

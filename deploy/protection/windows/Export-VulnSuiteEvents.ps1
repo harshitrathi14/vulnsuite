@@ -14,7 +14,8 @@ $errors = [System.Collections.Generic.List[string]]::new()
 $reset = $false
 $more = $false
 $channels = @(
-    @{Name='Security'; Filter='(EventID=4624 or EventID=4625 or EventID=5140)'},
+    # 1100/1102/4719: event-log service stopped, Security log cleared, audit policy changed.
+    @{Name='Security'; Filter='(EventID=4624 or EventID=4625 or EventID=5140 or EventID=1100 or EventID=1102 or EventID=4719)'},
     @{Name='Microsoft-Windows-Sysmon/Operational'; Filter='EventID=1'}
 )
 # Separate budgets prevent a busy Security channel starving process telemetry.

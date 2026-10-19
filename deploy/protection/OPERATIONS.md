@@ -53,7 +53,18 @@ python3 -m vulnsuite.protection.maintenance --actor health-monitor health \
   --database /var/lib/vulnsuite-protection/events.db \
   --stale-seconds 120 --grace-seconds 300 \
   --config /etc/vulnsuite-protection/server.json
+
+# Recompute every host's telemetry hash chain against the stored head. Compare
+# the head with the last telemetry.checkpoint delivered to the SIEM.
+python3 -m vulnsuite.protection.maintenance --actor integrity-check verify-chain \
+  --database /var/lib/vulnsuite-protection/events.db
 ```
+
+`verify-chain` reports, per host, the number of verified links, the first row
+whose link no longer matches (an edited, removed or reordered event) and whether
+the recomputed head equals the stored head (a removed tail). Retention that drops
+the oldest events is expected and does not break verification; a mismatch after
+the first retained event is evidence of tampering with this database.
 
 Only sensors that have previously reported can become `sensor_stale`. Review
 expected sensor configuration at enrollment; a never-enabled sensor has no evidence

@@ -16,6 +16,7 @@ are configured and an administrator separately approves each action.
 ## Evidence and limits
 
 - Security 4624/4625 with logon type 10 supplies RDP authentication events; type 3 remains generic network authentication. The source IP must be present and non-loopback.
+- Security 1102 (audit log cleared), 1100 (event-log service stopped) and 4719 (audit policy changed) are exported as `log_tamper` evidence with the acting account where the event carries one. Clearing the Security log is itself logged as the first entry of the new log, so the signal survives the clear.
 - Security 5140 supplies SMB share-access outcomes using the audit success/failure keyword. This is observed share access and may be normal; it is not proof of credential theft.
 - Sysmon 1 supplies process image, parent, PID, username, optional SHA256 and original event time. A `System32\wsmprovhost.exe` parent marks WinRM-associated execution; it does not infer a remote source IP or establish maliciousness. General type-3 logons are never relabeled WinRM.
 - Raw XML/messages, command lines, parent arguments, file contents and environment variables are excluded twice: by the PowerShell export allowlist and Python normalization.

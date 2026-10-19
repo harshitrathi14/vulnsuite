@@ -106,21 +106,58 @@ def sensor_event(state, outbox, sensor, status, detail):
             state["sensor_states"][sensor] = {"status": status, "detail": detail, "sent": now}
 
 
+_AUDIT_CORRELATORS: dict = {}
+
+
+def _tamper(path, change):
+    return event({"kind": "log_tamper", "path": path, "tamper": change})
+
+
 def collect_log(source, offsets, capacity):
+    """Tail one log source; a shrinking, replaced or missing file is itself evidence.
+
+    `rotation` per source: "rename" (default; a new inode is normal rotation but a
+    shrink of the same inode is not), "copytruncate" (shrinking is normal) or "none"
+    (any inode change is reported as replacement).
+    """
     path = source["path"]
+    rotation = source.get("rotation", "rename")
     events = []
     partial = False
-    with open(path, "rb") as stream:
+    old = offsets.get(path)
+    try:
+        stream = open(path, "rb")
+    except FileNotFoundError:
+        # Report the disappearance once; a recreated file is picked up as a new identity.
+        if old is not None and not old.get("missing"):
+            offsets[path] = {**old, "missing": True}
+            return [_tamper(path, "deleted")], "error", "input_error"
+        raise
+    with stream:
         info = os.fstat(stream.fileno())
         identity = f"{info.st_dev}:{info.st_ino}"
-        old = offsets.get(path)
         if old is None:
             offsets[path] = {"identity": identity, "position": 0 if source.get("read_from_start") else info.st_size}
             old = offsets[path]
-        same = old["identity"] == identity and old["position"] <= info.st_size
+        elif old.get("missing"):
+            # A log that reappears is read from its start: everything in it is new.
+            old = {"identity": identity, "position": 0}
+        same_file = old["identity"] == identity
+        same = same_file and old["position"] <= info.st_size
+        if same_file and old["position"] > info.st_size and rotation != "copytruncate":
+            events.append(_tamper(path, "truncated"))
+        elif not same_file and rotation == "none" and not old.get("missing"):
+            events.append(_tamper(path, "replaced"))
         position = old["position"] if same else 0
         skipping = old.get("skipping", False) if same else False
         stream.seek(position)
+        correlator = None
+        if source["kind"] == "linux_audit":
+            correlator = _AUDIT_CORRELATORS.get(path)
+            if correlator is None:
+                from .telemetry import LinuxAuditCorrelator
+                correlator = _AUDIT_CORRELATORS[path] = LinuxAuditCorrelator(
+                    source.get("tamper_ignore_executables", []))
         for _ in range(min(1000, capacity)):
             start = stream.tell()
             line = stream.readline(65537)
@@ -134,13 +171,23 @@ def collect_log(source, offsets, capacity):
                 stream.seek(start)
                 break
             try:
-                parsed = parse_line(line.decode("utf-8", errors="replace"), source["kind"])
-                if parsed:
-                    events.append(event(parsed))
+                text = line.decode("utf-8", errors="replace")
+                parsed = correlator.feed(text) if correlator else [parse_line(text, source["kind"])]
+                events.extend(event(item) for item in parsed if item)
             except ValueError:
                 partial = True
+        if correlator:
+            events.extend(event(item) for item in correlator.flush())
         offsets[path] = {"identity": identity, "position": stream.tell(), "skipping": skipping}
     return events, "partial" if partial else "ok", "input_error" if partial else "collected"
+
+
+def assign_sequence(state: dict, items: list) -> None:
+    """Number events once, in outbox order, from a counter persisted with the state."""
+    for item in items:
+        if item.get("sequence") is None:
+            state["sequence"] = state.get("sequence", 0) + 1
+            item["sequence"] = state["sequence"]
 
 
 def queue_capacity(config):
@@ -260,6 +307,7 @@ def cycle(config: dict, state: dict, path: Path, client):
         cleanup_playbooks(config, state, path)
     # Commit offsets, baseline and outbox together before network activity.
     collect(config, state)
+    assign_sequence(state, state["outbox"])
     save_state(path, state)
     try:
         # A full queue or invalid retained batch must not hide live delivery/agent health.
@@ -269,6 +317,7 @@ def cycle(config: dict, state: dict, path: Path, client):
             detail = "backpressure" if state.get("collection_paused") else "delivery_error"
             state["health_outbox"] = [heartbeat(config, state), event({"kind": "sensor_status",
                 "sensor": "delivery", "sensor_status": "partial", "sensor_detail": detail})]
+            assign_sequence(state, state["health_outbox"])
             save_state(path, state)
             deliver(client, state["health_outbox"])
             state.pop("health_outbox", None)
@@ -283,6 +332,7 @@ def cycle(config: dict, state: dict, path: Path, client):
             state["collection_paused"] = False
             state["health_outbox"] = [heartbeat(config, state), event({"kind": "sensor_status",
                 "sensor": "delivery", "sensor_status": "ok", "sensor_detail": "collected"})]
+            assign_sequence(state, state["health_outbox"])
             save_state(path, state)
             deliver(client, state["health_outbox"])
             state.pop("health_outbox", None)

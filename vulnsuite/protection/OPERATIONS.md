@@ -140,6 +140,44 @@ It covers backups, recovery, retention, missing-telemetry alerts, synthetic dete
 evaluation and staged agent upgrades. This service still uses a per-organisation
 SQLite operational database; it is not a horizontally scalable PostgreSQL backend.
 
+## Log tamper detection and telemetry integrity
+
+Attackers clear or edit logs to hide entry and movement. Three independent
+signals cover the host log, the audit trail and the record kept by this service:
+
+- Agent-side file signals. For every configured log source the agent records
+  the file identity and read offset. A file that shrinks under the same inode
+  (`truncated`), disappears (`deleted`) or, for sources with `"rotation": "none"`,
+  is replaced by a new inode (`replaced`) produces a `log_tamper` event and a
+  `log_tampering` alert. Normal rename rotation is not reported; sources rotated
+  with copytruncate set `"rotation": "copytruncate"`. A log that reappears is
+  read from its start.
+- Audit watch records. Load `deploy/protection/audit/vulnsuite-logs.rules`
+  (writes and attribute changes under `/var/log`, audit and syslog configuration,
+  audit control binaries, excluding the legitimate writers). The agent joins the
+  tagged SYSCALL record with its PATH record into one event carrying executable,
+  PID, audit uid and path; `tamper_ignore_executables` on the source silences an
+  approved writer without reloading audit policy. Windows Security events 1102
+  (log cleared), 1100 (event-log service stopped) and 4719 (audit policy changed)
+  are exported and raised as `cleared`, `audit_stopped` and `audit_policy_changed`.
+- Sequence numbers and a hash chain. Every event leaving the agent's durable
+  outbox carries a monotonic `sequence` persisted with the agent state. The
+  service raises `telemetry_gap` when numbers are skipped (events lost or removed
+  in transit) and `telemetry_sequence_reset` when they go backwards (agent state
+  replaced). Each accepted event is linked to the previous one for that host by
+  SHA-256 and the head is stored in `telemetry_chain`; once an hour the head is
+  sent to configured integrations as a `telemetry.checkpoint` notification so a
+  copy exists outside this database. `GET /v1/hosts/{host}/telemetry-chain` shows
+  the current head, and `python -m vulnsuite.protection.maintenance verify-chain
+  --database <db> [--host <host>]` recomputes the chain from stored events and
+  reports the first broken row or a head mismatch.
+
+Limits: these signals show that logs or records were altered, when and by which
+executable; the off-host copy is the protection. Truncation is detected at the
+next poll, not prevented. Rules for `/var/log` exclude the named writers, so a
+compromised rsyslogd or journald is out of scope. The chain anchors the service's
+own store; the audit table is not chained.
+
 ## Investigations, exceptions and notifications
 
 - `POST /v1/incidents` creates an owned case linked to actual alert IDs.

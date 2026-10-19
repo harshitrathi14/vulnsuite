@@ -12,6 +12,7 @@ AUDIT_FIELDS = re.compile(r'(?:^|\s)([a-zA-Z_][a-zA-Z_0-9]*)=("[^"]*"|\S+)')
 EXEC_SYSCALLS = {'c000003e': {59, 322}, '40000003': {11, 358}, 'c00000b7': {221, 281}}
 SECURITY = 'Microsoft-Windows-Security-Auditing'
 SYSMON = 'Microsoft-Windows-Sysmon'
+EVENTLOG = 'Microsoft-Windows-Eventlog'
 
 
 def _identity(source, record, timestamp):
@@ -79,6 +80,75 @@ def windows_hash_detection(process, known_bad):
     }
 
 
+LOG_TAMPER_KEY = 'vulnsuite_log_tamper'
+_NAMETYPE_TAMPER = {'DELETE': 'deleted', 'CREATE': 'replaced', 'NORMAL': 'written'}
+
+
+def _audit_text(raw, limit):
+    """Decode one audit field: quoted literal or hex-encoded (special characters)."""
+    value = raw[1:-1] if raw.startswith('"') else bytes.fromhex(raw).decode('utf-8')
+    return _text(value, limit)
+
+
+class LinuxAuditCorrelator:
+    """Join the SYSCALL record of a watched-file write with its PATH record.
+
+    auditd writes the records of one event contiguously under one serial. A
+    SYSCALL tagged `vulnsuite_log_tamper` is held until its PATH record names the
+    file (or until a record with another serial arrives), then emitted as one
+    `log_tamper` event. Execution records pass straight through unchanged.
+    """
+
+    def __init__(self, ignore_executables=()):
+        self.pending = None
+        self.ignore = {str(p) for p in ignore_executables}
+
+    def feed(self, line):
+        events = []
+        fields = dict(AUDIT_FIELDS.findall(line))
+        match = AUDIT_ID.search(line)
+        serial = match[2] if match else None
+        if self.pending and self.pending['serial'] != serial:
+            events.extend(self.flush())
+        record_type = fields.get('type')
+        if record_type == 'SYSCALL' and fields.get('key', '').strip('"') == LOG_TAMPER_KEY:
+            if fields.get('success') == 'yes' and match:
+                try:
+                    executable = _audit_text(fields['exe'], 1024)
+                    stamp = datetime.fromtimestamp(float(match[1]), timezone.utc).isoformat()
+                    record = f'{match[1]}:{match[2]}'
+                    if executable in self.ignore:
+                        self.pending = None
+                        return events
+                    self.pending = {'serial': serial, 'event': {
+                        'kind': 'log_tamper', 'tamper': 'written', 'telemetry_source': 'linux_audit',
+                        'event_id': _identity('linux_audit_tamper', record, stamp), 'occurred_at': stamp,
+                        'record_id': record, 'pid': int(fields['pid']), 'executable': executable,
+                        'user': _text(fields.get('auid', fields.get('uid', '?')).strip('"'), 128)}}
+                except (KeyError, TypeError, ValueError, UnicodeError, OverflowError):
+                    raise ValueError('invalid audit watch record') from None
+            return events
+        if record_type == 'PATH' and self.pending and serial == self.pending['serial']:
+            nametype = fields.get('nametype', '').strip('"')
+            if nametype in _NAMETYPE_TAMPER and 'path' not in self.pending['event']:
+                try:
+                    self.pending['event']['path'] = _audit_text(fields.get('name', '""'), 1024)
+                except (ValueError, UnicodeError):
+                    pass
+                self.pending['event']['tamper'] = _NAMETYPE_TAMPER[nametype]
+            return events
+        parsed = parse_linux_audit(line)
+        if parsed:
+            events.append(parsed)
+        return events
+
+    def flush(self):
+        if not self.pending:
+            return []
+        event, self.pending = self.pending['event'], None
+        return [event]
+
+
 def parse_linux_audit(line):
     """Read only successful SYSCALL records tagged by the supplied audit rules.
 
@@ -125,9 +195,19 @@ def parse_windows_event(line):
         data = row['EventData']
         stamp = _timestamp(row['TimeCreated'])
         record = _text(str(row['RecordId']), 128)
-        source = 'windows_security' if provider == SECURITY else 'windows_sysmon'
+        source = 'windows_sysmon' if provider == SYSMON else 'windows_security'
         common = {'telemetry_source': source, 'event_code': code, 'record_id': record,
                   'occurred_at': stamp, 'event_id': _identity(provider, record, stamp)}
+        # Audit-trail tampering: 1102 the Security log was cleared, 1100 the event
+        # logging service stopped, 4719 the audit policy was changed.
+        if (provider, code) in ((EVENTLOG, 1102), (EVENTLOG, 1100), (SECURITY, 4719)):
+            tamper = {1102: 'cleared', 1100: 'audit_stopped', 4719: 'audit_policy_changed'}[code]
+            result = {**common, 'kind': 'log_tamper', 'tamper': tamper, 'path': 'Security'}
+            user = data.get('SubjectUserName')
+            if isinstance(user, str) and user and user != '-':
+                domain = data.get('SubjectDomainName', '')
+                result['user'] = _text(f'{domain}\\{user}' if domain and domain != '-' else user, 128)
+            return result
         if provider == SECURITY and code in (4624, 4625, 5140):
             if code != 5140 and int(data['LogonType']) not in (3, 10):
                 return None

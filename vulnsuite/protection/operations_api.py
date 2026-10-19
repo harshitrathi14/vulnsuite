@@ -126,6 +126,14 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
         refresh_addresses()
         return {'host':host,'version':version}
 
+    @app.get('/v1/hosts/{host}/telemetry-chain',dependencies=[Depends(read)])
+    def telemetry_chain(host:str):
+        """Current hash-chain head for the host's accepted telemetry. Record it
+        externally; `maintenance verify-chain` recomputes it from stored events."""
+        status=store.chain_status(host)
+        if status is None: raise HTTPException(404,'no telemetry recorded for host')
+        return status
+
     @app.get('/v1/agent/policy')
     def agent_policy(host=Depends(agent)):
         policy=store.host_policies()[host]
