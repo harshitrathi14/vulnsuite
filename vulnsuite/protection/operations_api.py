@@ -8,9 +8,14 @@ from pathlib import Path
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
+from .integrations import IDENTITY_ACTIONS
 from .operations_models import (EnrollmentRequest,EnrollmentRedeem,HostPolicy,IncidentCreate,
                                 IncidentUpdate,ReviewRequest,SuppressionCreate,PlaybookRequest,PlaybookReceipt)
 from .overview import overview
+
+# Executed by the durable worker against a provider, never by the host agent.
+REMOTE_ACTIONS=('cloud_waf_block',)+IDENTITY_ACTIONS
+_REMOTE_SQL='('+','.join('?'*len(REMOTE_ACTIONS))+')'
 
 
 def mount_operations(app, store, cfg, read, write, admin, agent, body):
@@ -94,7 +99,7 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
             db.execute('UPDATE enrollment_tokens SET used=1 WHERE host=?',(host,))
             db.execute("UPDATE commands SET status='cancelled' WHERE host=? AND status='pending'",(host,))
             db.execute("UPDATE response_jobs SET status='cancelled' WHERE host=? AND status IN ('requested','approved') AND attempts=0",(host,))
-            db.execute("UPDATE response_jobs SET expires=? WHERE host=? AND action='cloud_waf_block' AND attempts>0 AND status NOT IN ('rolled_back','failed')",(time.time(),host))
+            db.execute("UPDATE response_jobs SET expires=? WHERE host=? AND action IN "+_REMOTE_SQL+" AND attempts>0 AND status NOT IN ('rolled_back','failed')",(time.time(),host,*REMOTE_ACTIONS))
             record(db,'agent_revoked',actor,{'host':host})
         refresh_addresses()
         return {'status':'revoked'}
@@ -231,12 +236,25 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
             if alert['host'] not in store.host_policies(): raise HTTPException(409,'host no longer active')
             policy=cfg.get('response',{}).get('hosts',{}).get(alert['host'],{})
             target_platform=policy.get('platform','linux')
-            if data.action!='cloud_waf_block' and target_platform not in ('linux','windows'):
+            if data.action not in REMOTE_ACTIONS and target_platform not in ('linux','windows'):
                 raise HTTPException(403,'unsupported host response platform')
             evidence={}
             try: evidence=json.loads(alert['detail'])
             except (ValueError,TypeError): pass
-            if data.action=='cloud_waf_block':
+            if data.action in IDENTITY_ACTIONS:
+                from .integrations import EntraIDConnector
+                identity=cfg.get('response',{}).get('identity')
+                if not identity or not identity.get('enabled'): raise HTTPException(403,'identity response disabled')
+                # The acting account comes from the event that raised the alert, never from the request.
+                user=evidence.get('user') if isinstance(evidence,dict) else None
+                triggering=db.execute('SELECT payload FROM events WHERE host=? AND id=?',(alert['host'],alert['event_id'])).fetchone()
+                if triggering:
+                    try: user=json.loads(triggering['payload']).get('user') or user
+                    except (ValueError,TypeError,AttributeError): pass
+                if not user: raise HTTPException(409,'identity response needs an alert with user evidence')
+                try: plan=EntraIDConnector(identity).prepare(data.action,user,data.duration_seconds,identifier,now=now)
+                except (ValueError,TypeError) as exc: raise HTTPException(403,'identity response denied by policy') from exc
+            elif data.action=='cloud_waf_block':
                 from .integrations import CloudflareWAFConnector
                 cloud=cfg.get('response',{}).get('cloud_waf')
                 if not cloud or not cloud.get('enabled'): raise HTTPException(403,'cloud WAF response disabled')
@@ -284,10 +302,10 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
                 if not policy.get('enabled') or data.action not in policy.get('allowed_actions',[]):
                     raise HTTPException(403,'rollback action disabled')
                 plan={'request_id':previous['id'],'previous_plan':previous_plan}
-            if data.action!='cloud_waf_block':
+            if data.action not in REMOTE_ACTIONS:
                 plan['platform']=target_platform
             plan['reason']=data.reason
-            expires=now+min(300,data.duration_seconds) if data.action not in ('isolate_host','cloud_waf_block') else plan.get('expires_at',now+data.duration_seconds)
+            expires=now+min(300,data.duration_seconds) if data.action not in ('isolate_host',)+REMOTE_ACTIONS else plan.get('expires_at',now+data.duration_seconds)
             plan['expires_at']=expires
             db.execute('INSERT INTO response_jobs(id,host,action,alert_id,plan,status,requested_by,created,expires) '
                        "VALUES(?,?,?,?,?,'requested',?,?,?)",(identifier,alert['host'],data.action,data.alert_id,json.dumps(plan),actor['sub'],now,expires))
@@ -315,7 +333,7 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
     def playbook_commands(host=Depends(agent)):
         with store.connect() as db:
             return {'commands':[{'id':r['id'],'action':r['action'],'plan':json.loads(r['plan'])} for r in db.execute(
-                "SELECT * FROM response_jobs WHERE host=? AND status='approved' AND action!='cloud_waf_block' AND expires>? ORDER BY created LIMIT 20",(host,time.time()))]}
+                "SELECT * FROM response_jobs WHERE host=? AND status='approved' AND action NOT IN "+_REMOTE_SQL+" AND expires>? ORDER BY created LIMIT 20",(host,*REMOTE_ACTIONS,time.time()))]}
 
     @app.post('/v1/playbooks/{identifier}/receipt')
     async def playbook_receipt(identifier:str,request:Request,host=Depends(agent)):
@@ -324,7 +342,7 @@ def mount_operations(app, store, cfg, read, write, admin, agent, body):
         if len(json.dumps(data.result))>16000: raise HTTPException(413,'receipt too large')
         with store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            row=db.execute('SELECT * FROM response_jobs WHERE id=? AND host=? AND action!=?',(identifier,host,'cloud_waf_block')).fetchone()
+            row=db.execute('SELECT * FROM response_jobs WHERE id=? AND host=? AND action NOT IN '+_REMOTE_SQL,(identifier,host,*REMOTE_ACTIONS)).fetchone()
             if not row: raise HTTPException(404,'job not found')
             expected = {'quarantine_file': ('applied','quarantined'), 'restore_file': ('rolled_back','restored'),
                         'isolate_host': ('applied','isolated'), 'release_host': ('rolled_back','isolation_released'),

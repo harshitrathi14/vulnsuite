@@ -10,10 +10,16 @@ import json
 import logging
 import time
 
-from .integrations import CloudflareWAFConnector, IntegrationError, WebhookConnector
+from .integrations import (IDENTITY_ACTIONS, CloudflareWAFConnector, EntraIDConnector,
+                           IntegrationError, WebhookConnector)
 
 LOG = logging.getLogger(__name__)
 LEASE_SECONDS = 120
+# Provider-executed actions; those in REVERSIBLE are rolled back at expiry.
+REMOTE_ACTIONS = ("cloud_waf_block",) + IDENTITY_ACTIONS
+REVERSIBLE = ("cloud_waf_block", "identity_disable_account")
+_REMOTE_SQL = "(" + ",".join("?" * len(REMOTE_ACTIONS)) + ")"
+_REVERSIBLE_SQL = "(" + ",".join("?" * len(REVERSIBLE)) + ")"
 
 
 def _delay(attempts: int) -> int:
@@ -72,19 +78,21 @@ def _claim_response(store, now):
         db.execute("BEGIN IMMEDIATE")
         # Expired unexecuted plans cannot be applied. A timed-out POST may have
         # succeeded, so expired running/retried plans still require reconciliation.
-        db.execute("UPDATE response_jobs SET status='expired' WHERE action='cloud_waf_block' "
-                   "AND status IN ('requested','approved') AND attempts=0 AND expires<=?", (now,))
-        row = db.execute("SELECT * FROM response_jobs WHERE action='cloud_waf_block' AND ("
+        db.execute("UPDATE response_jobs SET status='expired' WHERE action IN " + _REMOTE_SQL +
+                   " AND status IN ('requested','approved') AND attempts=0 AND expires<=?", (*REMOTE_ACTIONS, now))
+        row = db.execute("SELECT * FROM response_jobs WHERE action IN " + _REMOTE_SQL + " AND ("
                          "(status='approved' AND next_attempt<=?) OR "
                          "(status='running' AND lease_until<=?) OR "
-                         "(status='applied' AND expires<=?) OR "
+                         "(status='applied' AND expires<=? AND action IN " + _REVERSIBLE_SQL + ") OR "
                          "(status='rolling_back' AND lease_until<=?) OR "
                          "(status='rollback_failed' AND next_attempt<=?)) ORDER BY created LIMIT 1",
-                         (now, now, now, now, now)).fetchone()
+                         (*REMOTE_ACTIONS, now, now, now, *REVERSIBLE, now, now)).fetchone()
         if not row:
             return None
         result = dict(row)
-        result["rollback"] = row["status"] in ("applied", "rolling_back", "rollback_failed") or row["expires"] <= now
+        reversible = row["action"] in REVERSIBLE
+        result["rollback"] = row["status"] in ("applied", "rolling_back", "rollback_failed") or (
+            reversible and row["expires"] <= now)
         status = "rolling_back" if result["rollback"] else "running"
         db.execute("UPDATE response_jobs SET status=?,attempts=attempts+1,lease_until=? WHERE id=?",
                    (status, now + LEASE_SECONDS, row["id"]))
@@ -100,13 +108,17 @@ def process_responses(store, config: dict, *, limit=20, transport=None) -> dict:
         if not row:
             break
         try:
-            settings = config.get("response", {}).get("cloud_waf", {})
+            identity = row["action"] in IDENTITY_ACTIONS
+            settings = config.get("response", {}).get("identity" if identity else "cloud_waf", {})
             # Disabling new actions must not disable cleanup of previously applied
             # actions. Preserve credentials/scope until outstanding jobs are clean.
             if not row["rollback"] and settings.get("enabled") is not True:
                 raise IntegrationError("connector_disabled")
-            connector = CloudflareWAFConnector(settings, transport=transport)
+            connector = (EntraIDConnector if identity else CloudflareWAFConnector)(settings, transport=transport)
             plan = json.loads(row["plan"])
+            if row["rollback"] and row["action"] not in REVERSIBLE:
+                # An expired or lease-lost one-shot action is never retried blindly.
+                raise IntegrationError("not_reversible")
             result = connector.rollback(plan) if row["rollback"] else connector.apply(plan)
             status = result["status"]
         except IntegrationError as exc:
@@ -121,7 +133,8 @@ def process_responses(store, config: dict, *, limit=20, transport=None) -> dict:
                                  (status, json.dumps(result), time.time() + _delay(row["attempts"] + 1),
                                   row["id"], row["claimed_status"], now + LEASE_SECONDS)).rowcount
             if updated:
-                store.audit(db, "cloud_response", row["id"], json.dumps(result))
+                store.audit(db, "identity_response" if row["action"] in IDENTITY_ACTIONS else "cloud_response",
+                            row["id"], json.dumps(result))
                 counts[status] += 1
     return counts
 

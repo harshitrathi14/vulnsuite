@@ -18,6 +18,16 @@
       "protected_networks": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
       "permitted_networks": ["0.0.0.0/0", "::/0"]
     },
+    "identity": {
+      "enabled": false,
+      "provider": "entra_id",
+      "tenant_id": "00000000-0000-0000-0000-000000000000",
+      "client_id": "00000000-0000-0000-0000-000000000000",
+      "client_secret_env": "VULNSUITE_ENTRA_CLIENT_SECRET",
+      "allowed_domains": ["corp.example"],
+      "upn_domain": "corp.example",
+      "protected_users": ["breakglass@corp.example", "svc-backup@corp.example"]
+    },
     "hosts": {
       "server-a": {
         "enabled": false,

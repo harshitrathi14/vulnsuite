@@ -64,6 +64,39 @@ Provider references used for this implementation:
 - [Request timestamp field](https://developers.cloudflare.com/ruleset-engine/rules-language/fields/reference/http.request.timestamp.sec/).
 - [Delete a rule](https://developers.cloudflare.com/ruleset-engine/rulesets-api/delete-rule/).
 
+## Microsoft Entra ID identity response
+
+- Register an application in the tenant with application permissions only:
+  `User.RevokeSessions.All` for `identity_revoke_sessions`, `User.ReadWrite.All`
+  for `identity_disable_account`. Scope it to an administrative unit of the
+  accounts the SOC may act on where the tenant supports it. Store the client
+  secret (or a certificate-backed secret broker's output) in the environment
+  variable named by `client_secret_env`; it never appears in configuration.
+- `allowed_domains` lists the UPN suffixes the connector may touch;
+  `protected_users` lists break-glass and service accounts that are never
+  touched, whatever the alert says; `upn_domain` completes bare or `DOMAIN\user`
+  evidence from Windows and SSH logs into a UPN.
+- The acting account is taken from the event that raised the alert (login
+  evidence), never from the request body. An analyst requests
+  `identity_revoke_sessions` (one-shot: every refresh token and session is
+  invalidated, forcing re-authentication under the identity provider's policy)
+  or `identity_disable_account` (sign-in disabled for 60–3,600 seconds). A
+  different administrator approves. The durable worker exchanges the client
+  credential for a token, confirms the user object matches the approved UPN,
+  then acts. A disable is re-enabled by the worker at expiry, and immediately
+  when the originating host is revoked; an account already disabled by someone
+  else is left alone and the job fails as `account_already_disabled`.
+- Revoking sessions does not end an established VPN or RDP session that does
+  not re-validate tokens, and disabling an account does not disconnect it; pair
+  with `isolate_host` or network response where needed. Conditional-access
+  and privileged-role changes are out of scope.
+
+Provider references used for this implementation:
+
+- [Client credentials flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow).
+- [revokeSignInSessions](https://learn.microsoft.com/en-us/graph/api/user-revokesigninsessions).
+- [Update user (accountEnabled)](https://learn.microsoft.com/en-us/graph/api/user-update).
+
 ## Linux quarantine and isolation
 
 - Control-plane approvals and local `response_policy.enabled` plus

@@ -76,7 +76,7 @@ class SuppressionCreate(StrictModel):
 
 class PlaybookRequest(StrictModel):
     action: Literal['quarantine_file','restore_file','isolate_host','release_host','cloud_waf_block',
-                    'terminate_process']
+                    'terminate_process','identity_revoke_sessions','identity_disable_account']
     alert_id: int = Field(gt=0)
     duration_seconds: int = Field(default=300, ge=60, le=3600)
     previous_job_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')

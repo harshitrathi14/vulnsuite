@@ -226,6 +226,14 @@ Supported playbooks:
   provider-evaluated fixed expiry, so failed cleanup cannot turn the temporary block
   into permanent enforcement. The durable worker reconciles and removes expired
   managed rules; retries do not extend the approved expiry.
+- `identity_revoke_sessions` / `identity_disable_account`: Microsoft Entra ID
+  response for the account named in the alert's login evidence (password
+  spraying, brute force, fan-out, lateral movement). Revocation invalidates every
+  session and refresh token once; disabling blocks sign-in for a fixed 60–3,600
+  second window and the worker re-enables the account at expiry or when the
+  originating host is revoked. `allowed_domains` and `protected_users` bound what
+  the connector may touch; see the integrations guide for the application
+  permissions and limits.
 - `terminate_process`: only alerts that evidence a PID (`web_server_shell`,
   `writable_directory_execution`, `deleted_executable`, or a `malware_detected`
   hit from the running-process scan). The plan pins PID, executable and, where the
