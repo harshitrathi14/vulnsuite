@@ -230,6 +230,13 @@ An initial Linux server-protection module is available alongside vulnerability s
 
 Verified JWT/SSO access-token validation, role checks, a unified operations console, central agent enrollment, Windows/Linux audit telemetry, incident workflows, notification delivery and reviewed containment are implemented. See [the operations guide](protection/OPERATIONS.md) for configuration, tests and deployment boundaries.
 
+The hardening build adds four response and evidence capabilities under the same
+approval workflow: approved process termination with an on-host identity re-check,
+log tamper detection with sequence-numbered, hash-chained telemetry, Microsoft
+Entra ID session revocation and timed account disable, and ransomware early
+warning (canaries, mass-change and entropy signals) with optional, dual opt-in
+pre-approved isolation. See [the operations guide](protection/OPERATIONS.md).
+
 Release 0.4 adds Windows-native quarantine/restoration and temporary firewall
 isolation/release, using the same separate-actor approval workflow as Linux.
 Windows response requires explicit local enablement, native ACL/helper setup and

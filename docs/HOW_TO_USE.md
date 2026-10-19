@@ -276,6 +276,26 @@ Rows cannot be updated or deleted: the runtime database role has only insert and
 
 `POST /api/v1/copilot/query` with `{"question": "..."}` answers questions over the tenant's findings using Claude. It is advisory and disabled automatically when no API key is configured.
 
+### 6.9 Server protection responses (protection service)
+
+The protection service has its own API and console (`vulnsuite/protection/OPERATIONS.md`). Every response below follows the same rule: an analyst requests it from an alert, a different administrator approves, the executor re-checks policy, and a receipt is recorded.
+
+| Playbook | What it does | Evidence it needs |
+|---|---|---|
+| `quarantine_file` / `restore_file` | Moves a malware file into a private vault after hash verification; restores without overwriting | Malware alert with path and SHA-256 |
+| `terminate_process` | Ends one process after re-verifying its identity on the host (pidfd on Linux, single handle on Windows); SIGTERM then SIGKILL. Never init, systemd, sshd or core Windows processes | Web-shell, temp-path execution, deleted-executable or running-malware alert with a PID |
+| `isolate_host` / `release_host` | Blocks all traffic except management networks for 60 to 3,600 seconds with a kernel or scheduled-task expiry | Any recent alert on the host |
+| `cloud_waf_block` | Temporary Cloudflare block of the attacking IP with a provider-evaluated expiry | Alert with a source IP |
+| `identity_revoke_sessions` | Invalidates every Entra ID session and refresh token of the account in the alert's login evidence (one-shot) | Brute-force, spraying, fan-out or lateral-movement alert with a user |
+| `identity_disable_account` | Disables Entra ID sign-in for a fixed window; the worker re-enables at expiry | Same |
+
+Protected lists apply everywhere: `protected_executables`, `protected_users` and `allowed_domains` are enforced on the server and again on the executor.
+
+**Sensors added for intrusion evidence**
+
+- Ransomware early warning: canary files, mass rename or rewrite thresholds per watched directory, and high-entropy rewrite sampling raise a critical `ransomware_activity` alert. Pre-approved automatic isolation for that rule is off by default and needs both the service policy (naming the approving administrator) and the host's local `allow_automatic` switch.
+- Log tamper detection: a log file that shrinks, disappears or is replaced; auditd watch records on `/var/log`, audit and syslog configuration (with the acting executable, PID and uid); Windows events 1102, 1100 and 4719. Every agent event carries a sequence number and the service chains accepted events by SHA-256, raising `telemetry_gap` and `telemetry_sequence_reset` alerts and sending an hourly `telemetry.checkpoint` to the SIEM. Verify with `python -m vulnsuite.protection.maintenance verify-chain`.
+
 ---
 
 ## 7. Verification and testing process
@@ -290,7 +310,7 @@ pip install "./vulnsuite[dev]"        # installs runtime and test dependencies
 python -m pytest tests -q -m "not integration and not azure"
 ```
 
-The tests import the `vulnsuite` package from the current directory, so run them from the top folder. Expected result for this package: all tests pass (442 passed, 7 skipped at packaging time on 2026-10-19; the skips are tests that need scanner binaries or cloud credentials).
+The tests import the `vulnsuite` package from the current directory, so run them from the top folder. Expected result for this package: all tests pass (486 passed, 7 skipped at packaging time on 2026-10-19; the skips are tests that need scanner binaries or cloud credentials).
 
 | Suite | What it proves |
 |---|---|
@@ -304,7 +324,11 @@ The tests import the `vulnsuite` package from the current directory, so run them
 | `tests/test_scan_lifecycle.py` | EPSS prefetch, auto-close only on successful tool runs |
 | `tests/test_deploy_hardening.py` | Every download pinned, no `curl | sh`, no `latest`, non-root runtime, Redis password, separate schema owner, explicit CORS |
 | `tests/test_worker_wiring.py` | Every Celery queue routed in code is consumed by the Compose worker |
-| `tests/protection/` | Server-protection module |
+| `tests/protection/test_process_response.py` | Termination plan policy, identity re-check, PID-reuse refusal, SIGTERM/SIGKILL escalation, Windows handle flow, full approval chain |
+| `tests/protection/test_log_tamper.py` | Truncation, deletion and replacement signals, auditd correlation, Windows log-cleared events, sequence gaps and resets, hash chain, checkpoints, `verify-chain` |
+| `tests/protection/test_identity_response.py` | UPN policy, Graph token and user checks, disable and re-enable, one-shot revocation, worker and revocation handling |
+| `tests/protection/test_ransomware.py` | Canary, mass-change and entropy signals on inert files, critical alert, dual opt-in automatic isolation |
+| `tests/protection/` (others) | Server-protection module: telemetry, enrollment, incidents, quarantine, isolation, WAF |
 
 ### 7.2 Staging acceptance checklist (manual, before production)
 
@@ -317,6 +341,10 @@ The tests import the `vulnsuite` package from the current directory, so run them
 7. As `auditor`, attempt a triage call: expect 403.
 8. Query `psql` as `vulnsuite_app` and attempt `DELETE FROM audit_events`: expect permission denied.
 9. Generate a report and verify the SHA-256 in the footer matches the file content hash.
+10. On a staging Linux host, run an inert script from `/tmp`, request `terminate_process` from the resulting alert, approve as a second administrator and confirm the receipt shows `process_terminated`. Repeat after the script has exited: expect `process_absent`.
+11. Truncate a monitored log and clear the Windows Security log on a staging host: expect `log_tampering` alerts. Stop the agent, delete its state file, restart: expect `telemetry_sequence_reset`. Run `verify-chain` and compare the head with the SIEM checkpoint.
+12. Against a test Entra ID tenant and a disposable test user, run `identity_disable_account` and confirm sign-in is refused, then that the worker re-enables it at expiry. Confirm a `protected_users` entry is refused with 403.
+13. Rename and rewrite 50 inert files in a watched share: expect `ransomware_activity`. With automatic isolation enabled on both sides, confirm the host isolates, management access survives, and the isolation expires.
 
 ---
 
@@ -366,6 +394,10 @@ Back up the `pgdata` volume (findings, assets, bindings, scopes, audit events) a
 | Redis authenticated; CORS explicit, wildcard rejected | `docker-compose.yml`, `core/config.py` |
 | Tamper-evident PDF reports (SHA-256 footer); CERT-In 6-hour incident JSON for every P0 | `reporting/`, `compliance/` |
 | No telemetry egress from scanners; full offline mode | collector flags, `ScanningSettings` |
+| Approved process termination with on-host identity re-check; protected system processes | `protection/process_response.py`, `windows_process.py` |
+| Log tamper signals, auditd watch correlation, sequence numbers, per-host hash chain with external checkpoints | `protection/agent.py`, `telemetry.py`, `store.py`, `maintenance.py` |
+| Entra ID session revocation and timed account disable, bounded by allowed domains and protected users | `protection/integrations.py`, `response_worker.py` |
+| Ransomware early warning (canaries, mass change, entropy); automatic isolation only with dual opt-in | `protection/ransomware.py`, `operations_store.py` |
 
 ---
 

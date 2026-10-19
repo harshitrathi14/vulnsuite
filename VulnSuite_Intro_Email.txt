@@ -37,8 +37,10 @@ VulnSuite was developed with assistance from frontier AI models, including Anthr
 5. SERVER MONITORING AND APPROVED PROTECTION
    • Windows and Linux monitoring: Windows Security/Sysmon and Linux audit adapters, with SSH/API abuse, file-integrity and selected process signals.
    • Malware and lateral-movement signals: known-bad SHA256 matches, optional Linux selected-file ClamAV scanning and cross-host login/pivot correlation.
-   • Windows and Linux containment: approved file quarantine/restoration and temporary host isolation/release, subject to separate-actor approval and local host policy. Containment is disabled by default.
-   • WAF integration: ModSecurity/OWASP CRS templates and sanitised telemetry, plus approved source-IP blocks through a configured Cloudflare connector.
+   • Windows and Linux containment: approved file quarantine/restoration, process termination after an on-host identity re-check, and temporary host isolation/release, subject to separate-actor approval and local host policy. Containment is disabled by default.
+   • Identity and WAF response: Microsoft Entra ID session revocation or timed account disable for the account in the alert evidence, bounded by allowed domains and protected users; approved source-IP blocks through a configured Cloudflare connector.
+   • Ransomware early warning: canary documents, mass rename/rewrite thresholds and high-entropy rewrite sampling raise a critical alert; pre-approved isolation for that signal is available only with explicit opt-in on both the service and the host.
+   • Log tamper detection: truncated, deleted or replaced logs, auditd watch records on log and audit configuration, Windows log-cleared events, sequence-numbered and hash-chained telemetry with hourly checkpoints to the SIEM and a verification command.
 
 6. SECURITY OPERATIONS
    • SOC console: intrusion alerts, vulnerability findings, agent health and response review in a shared investigation view, with the same role checks as the API.
@@ -52,7 +54,7 @@ VulnSuite was developed with assistance from frontier AI models, including Anthr
    • Assessment resilience: a crashing or timed-out scanner never fails a run; its error is recorded and findings it previously reported are never auto-closed on that basis.
 
 8. VALIDATION AND DEPLOYMENT REQUIREMENTS
-   • Evidence: 442 automated tests passed across access control, tenant and database-role boundaries, target safety, scopes, cloud bindings, audit trail, triage, deployment pinning, detection, enrollment, incident and response workflows, plus seven narrowly scoped native Windows file-operation checks. Mocked response tests do not establish live enforcement.
+   • Evidence: 486 automated tests passed across access control, tenant and database-role boundaries, target safety, scopes, cloud bindings, audit trail, triage, deployment pinning, detection, enrollment, incident and response workflows, plus seven narrowly scoped native Windows file-operation checks. Mocked response tests do not establish live enforcement.
    • Staging before production: identity-provider integration, PostgreSQL policies with both database roles, the container image build, telemetry collection, ClamAV signatures, WAF enforcement, and native Windows/Linux containment and recovery.
    • Operating scope: the protection service runs one organisation per SQLite store. Full EDR, memory protection, high availability and production capacity are outside the validated scope; quarantine does not terminate an already-running process.
 

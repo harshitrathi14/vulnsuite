@@ -26,7 +26,7 @@ FONT = 'DejaVu Sans'
 FONT_FILE = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 BOLD_FILE = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
 DATE = '19 October 2026'
-TESTS = '442 automated tests passed'
+TESTS = '486 automated tests passed'
 
 # (title, kicker, (left heading, bullets), (right heading, bullets), footnote)
 SLIDES = [
@@ -90,10 +90,14 @@ SLIDES = [
  ('On-premises or proxy WAF', ['Nginx / ModSecurity and OWASP CRS templates', 'Sanitised serial-JSON rule-match collection', 'DetectionOnly starting configuration', 'No request-body or credential export']),
  ('Cloudflare response connector', ['Use a configured zone and custom-ruleset scope', 'Apply an approved source-IP block', 'Embed fixed expiry in the provider rule', 'Retry cleanup without extending the deadline']),
  'Rule ordering, provider permissions, propagation and real traffic enforcement remain staging checks.'),
-('Reviewed local containment', 'APPROVAL + BOUNDED ENFORCEMENT',
- ('Quarantine and restoration', ['Use approved malware path and SHA256 evidence', 'Linux: private same-filesystem quarantine vault', 'Windows: file-handle checks and protected ACLs', 'Restore without overwriting existing files']),
- ('Isolation and release', ['Require separate approval and local policy', 'Linux: kernel-expiring nftables isolation', 'Windows: firewall rules with local recovery tasks', 'Keep configured management exceptions']),
- 'Containment is disabled by default. Windows expiry uses local recovery tasks; Linux uses kernel timeouts.'),
+('Reviewed containment and response', 'APPROVAL + BOUNDED ENFORCEMENT',
+ ('On the host', ['Quarantine with approved path and SHA256 evidence', 'Process termination after an identity re-check', 'Isolation with kernel or scheduled-task expiry', 'Restore and release as separately approved rollbacks']),
+ ('In the identity provider and WAF', ['Entra ID session revocation, one shot', 'Entra ID account disable for a fixed window', 'Cloudflare block with provider-evaluated expiry', 'Protected users, domains and executables enforced twice']),
+ 'Containment is disabled by default. Every action needs a second administrator; pre-approved isolation exists only for ransomware with dual opt-in.'),
+('Ransomware and log-tamper signals', 'EARLY WARNING + EVIDENCE INTEGRITY',
+ ('Ransomware early warning', ['Canary documents nothing legitimate touches', 'Mass rename, rewrite and deletion thresholds', 'High-entropy rewrites sampled from changed files', 'Critical alert; optional pre-approved isolation']),
+ ('Log and record integrity', ['Truncated, deleted or replaced log files reported', 'auditd watch records with executable, PID and uid', 'Windows log cleared and audit policy changes', 'Sequence numbers and a hash chain with SIEM checkpoints']),
+ 'Encryption is detected at the next poll, not prevented; backups decide the outcome. The chain proves alteration, the off-host copy is the protection.'),
 ('How the components fit', 'PLATFORM ARCHITECTURE',
  ('Assessment service', ['FastAPI service, Celery workers and nightly scheduler', 'PostgreSQL with tenant policies, Redis broker and cache', 'Canonical findings, dedup and deterministic risk scoring', 'Read-only findings feed into the operations console']),
  ('Protection service', ['Authenticated Linux and Windows agents', 'One organisation per SQLite operational store', 'Detection, incidents, policies and response history', 'Independent delivery and cloud-response worker']),
@@ -144,7 +148,8 @@ DESCRIPTIONS = [
  'Selected process patterns and reviewed malware indicators provide clues that warrant investigation. A known-bad hash match supplies specific file evidence; analysts can review its context before approving action, while missing scanners or telemetry remain visible as coverage limitations.',
  'Activity that appears ordinary on one server can become suspicious when repeated across several hosts. Correlating authentication events helps analysts recognise possible account misuse or movement between systems, while retaining context needed to assess legitimate administrative activity.',
  'Web application firewalls provide an enforcement point for traffic reaching protected applications. Connecting their signals with investigations helps teams understand attempted abuse and review scoped blocking decisions, with tuning and deployment checks needed to avoid disrupting legitimate requests.',
- 'Containment can interrupt business services, so response decisions need clear evidence and accountability. VulnSuite places supported file quarantine and host isolation behind separate approval and local policy checks, with recorded outcomes and reviewed recovery paths.',
+ 'Containment can interrupt business services, so response decisions need clear evidence and accountability. VulnSuite places file quarantine, process termination, host isolation, identity and WAF response behind separate approval and local policy checks, with recorded outcomes and reviewed recovery paths.',
+ 'Attackers encrypt data and erase their tracks. Decoy files, change-rate and entropy signals give the SOC minutes of warning on a share, while tamper signals, sequence numbers and a hash chain show when logs or stored evidence were altered, by which process and when.',
  'The assessment service evaluates exposure; the protection service handles telemetry, investigations and response. Their separate responsibilities help teams plan access, storage, maintenance and integration around the requirements of each service.',
  'Host monitoring depends on knowing which agents are enrolled, authorised and reporting correctly. Central lifecycle controls help maintain that inventory, replace credentials, withdraw access and identify policy or version differences that require administrator attention.',
  'Investigations often involve several people and external operational systems. Incident records preserve ownership and decisions, while signed notifications carry relevant information to organisation-operated integrations, helping teams coordinate work and recover delivery after temporary service failures.',
@@ -194,8 +199,10 @@ SECTIONS = [
 ('Server monitoring and approved protection', [
  'Windows and Linux monitoring: Windows Security/Sysmon and Linux audit adapters, with SSH/API abuse, file-integrity and selected process signals.',
  'Malware and lateral-movement signals: known-bad SHA256 matches, optional Linux selected-file ClamAV scanning and cross-host login/pivot correlation.',
- 'Windows and Linux containment: approved file quarantine/restoration and temporary host isolation/release, subject to separate-actor approval and local host policy. Containment is disabled by default.',
- 'WAF integration: ModSecurity/OWASP CRS templates and sanitised telemetry, plus approved source-IP blocks through a configured Cloudflare connector.',
+ 'Windows and Linux containment: approved file quarantine/restoration, process termination after an on-host identity re-check, and temporary host isolation/release, subject to separate-actor approval and local host policy. Containment is disabled by default.',
+ 'Identity and WAF response: Microsoft Entra ID session revocation or timed account disable for the account in the alert evidence, bounded by allowed domains and protected users; approved source-IP blocks through a configured Cloudflare connector.',
+ 'Ransomware early warning: canary documents, mass rename/rewrite thresholds and high-entropy rewrite sampling raise a critical alert; pre-approved isolation for that signal is available only with explicit opt-in on both the service and the host.',
+ 'Log tamper detection: truncated, deleted or replaced logs, auditd watch records on log and audit configuration, Windows log-cleared events, sequence-numbered and hash-chained telemetry with hourly checkpoints to the SIEM and a verification command.',
 ]),
 ('Security operations', [
  'SOC console: intrusion alerts, vulnerability findings, agent health and response review in a shared investigation view, with the same role checks as the API.',
