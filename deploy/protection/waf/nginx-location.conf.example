@@ -1,0 +1,5 @@
+# Insert within the existing TLS server/location that fronts your API.
+# Requires the ModSecurity-nginx module to be installed and loaded by nginx.
+# Keep existing TLS, upstream, authentication, proxy and trusted-client-IP settings.
+modsecurity on;
+modsecurity_rules_file /etc/modsecurity/modsecurity-vulnsuite.conf;

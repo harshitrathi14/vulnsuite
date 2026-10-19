@@ -1,0 +1,15 @@
+{
+  "response_policy": {
+    "enabled": false,
+    "allowed_actions": ["quarantine_file", "restore_file", "isolate_host", "release_host"],
+    "quarantine": {
+      "quarantine_dir": "/srv/vulnsuite-quarantine",
+      "allowed_paths": ["/srv/application/uploads/investigated-sample.bin"],
+      "max_file_bytes": 104857600
+    },
+    "isolation": {
+      "management_networks": ["10.10.0.5/32"],
+      "management_ports": [22, 443]
+    }
+  }
+}

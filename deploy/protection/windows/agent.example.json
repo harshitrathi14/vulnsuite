@@ -1,0 +1,48 @@
+{
+  "server_url": "https://protection.example.org",
+  "token": "REPLACE_WITH_UNIQUE_RANDOM_HOST_TOKEN",
+  "state_path": "C:\\ProgramData\\VulnSuite\\state.json",
+  "queue_capacity": 50000,
+  "poll_seconds": 10,
+  "windows_eventlog": {
+    "enabled": true,
+    "export_script": "C:\\ProgramData\\VulnSuite\\Export-VulnSuiteEvents.ps1",
+    "powershell": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "known_bad_sha256": {}
+  },
+  "logs": [],
+  "watch_files": [],
+  "allow_response": false,
+  "response_policy": {
+    "enabled": false,
+    "platform": "windows",
+    "allowed_actions": [
+      "quarantine_file",
+      "restore_file",
+      "isolate_host",
+      "release_host"
+    ],
+    "quarantine": {
+      "quarantine_dir": "C:\\ProgramData\\VulnSuite\\Quarantine",
+      "allowed_paths": [
+        "C:\\Applications\\Uploads\\reviewed-sample.bin"
+      ],
+      "protected_paths": [
+        "C:\\ProgramData\\VulnSuite"
+      ],
+      "max_file_bytes": 104857600
+    },
+    "isolation": {
+      "state_dir": "C:\\ProgramData\\VulnSuite\\Isolation",
+      "helper_sha256": "REPLACE_WITH_REVIEWED_INSTALLED_HELPER_SHA256",
+      "management_networks": [
+        "10.10.0.5/32"
+      ],
+      "management_ports": [
+        443,
+        3389,
+        5986
+      ]
+    }
+  }
+}

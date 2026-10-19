@@ -1,0 +1,20 @@
+{
+  "database": "/var/lib/vulnsuite-protection/events.db",
+  "retention_days": 7,
+  "organisation_id": "11111111-1111-4111-8111-111111111111",
+  "operator_auth": {
+    "oidc_issuer": "https://identity.example.org/your-issuer",
+    "oidc_audience": "vulnsuite",
+    "jwks_url": "https://identity.example.org/your-issuer/keys",
+    "tenant_claim": "tenant_id",
+    "roles_claim": "roles"
+  },
+  "hosts": {},
+  "integrations": {},
+  "response": {"hosts": {}},
+  "assessment_api": {
+    "base_url": "https://assessment.example.org",
+    "token_env": "VULNSUITE_ASSESSMENT_READ_TOKEN",
+    "tenant_id": "11111111-1111-4111-8111-111111111111"
+  }
+}

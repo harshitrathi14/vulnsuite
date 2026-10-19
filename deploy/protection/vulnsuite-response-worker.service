@@ -1,0 +1,23 @@
+[Unit]
+Description=VulnSuite approved response and notification worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vulnsuite-protection
+Group=vulnsuite-protection
+WorkingDirectory=/opt/vulnsuite
+EnvironmentFile=/etc/vulnsuite-protection/integration-secrets.env
+ExecStart=/opt/vulnsuite/.venv/bin/python -m vulnsuite.protection.response_worker --config /etc/vulnsuite-protection/server.json --database /var/lib/vulnsuite-protection/events.db --watch
+Restart=on-failure
+RestartSec=5
+StateDirectory=vulnsuite-protection
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,4 @@
+{
+  "path": "/var/log/modsecurity/vulnsuite-audit.json",
+  "kind": "modsecurity"
+}

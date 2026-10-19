@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON, Boolean, Float, ForeignKey, Index, Integer, String, DateTime,
-    UniqueConstraint, text, select,
+    UniqueConstraint, event, text, select,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -99,11 +99,22 @@ class FindingRow(Base):
 RLS_DDL = [
     "ALTER TABLE assets   ENABLE ROW LEVEL SECURITY;",
     "ALTER TABLE findings ENABLE ROW LEVEL SECURITY;",
+    "ALTER TABLE assets   FORCE ROW LEVEL SECURITY;",
+    "ALTER TABLE findings FORCE ROW LEVEL SECURITY;",
+    # DDL runs in one transaction under the ALTER TABLE locks. Replacing these
+    # named policies also upgrades existing installations without swallowing SQL
+    # errors (a failed statement would otherwise abort the entire transaction).
+    "DROP POLICY IF EXISTS tenant_isolation_assets ON assets;",
+    "DROP POLICY IF EXISTS tenant_isolation_findings ON findings;",
     """CREATE POLICY tenant_isolation_assets ON assets
-       USING (tenant_id = current_setting('app.tenant_id')::uuid);""",
+       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+       WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);""",
     """CREATE POLICY tenant_isolation_findings ON findings
-       USING (tenant_id = current_setting('app.tenant_id')::uuid);""",
+       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+       WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);""",
 ]
+
+TENANT_CONTEXT_SQL = text("SELECT set_config('app.tenant_id', :tid, true)")
 
 
 # ---------- Engine / session ----------
@@ -138,22 +149,32 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 async def init_db() -> None:
     """Create tables + apply RLS. Idempotent-safe for dev; use Alembic in prod."""
     async with get_engine().begin() as conn:
+        bypasses_rls = await conn.scalar(text(
+            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
+        ))
+        if bypasses_rls is not False:
+            raise RuntimeError("VulnSuite database role must be NOSUPERUSER NOBYPASSRLS")
         await conn.run_sync(Base.metadata.create_all)
         for stmt in RLS_DDL:
-            try:
-                await conn.execute(text(stmt))
-            except Exception:
-                pass  # policy already exists
+            await conn.execute(text(stmt))
 
 
 @asynccontextmanager
 async def tenant_session(tenant_id: UUID) -> AsyncIterator[AsyncSession]:
     """Yield a session scoped to one tenant. RLS does the filtering."""
+    signed_tenant = str(UUID(str(tenant_id)))
     async with get_sessionmaker()() as session:
-        await session.execute(
-            text("SET LOCAL app.tenant_id = :tid"), {"tid": str(tenant_id)}
-        )
-        yield session
+        # after_begin runs on every transaction, including after a caller commits
+        # and reuses its session. set_config(..., true) cannot leak to the next
+        # pool borrower. SQLAlchemy sync events support async driver adaptation.
+        def bind_tenant(_session, _transaction, connection):
+            connection.execute(TENANT_CONTEXT_SQL, {"tid": signed_tenant})
+
+        event.listen(session.sync_session, "after_begin", bind_tenant)
+        try:
+            yield session
+        finally:
+            event.remove(session.sync_session, "after_begin", bind_tenant)
 
 
 def _asset_identity(asset: Asset) -> tuple[str, str, str]:

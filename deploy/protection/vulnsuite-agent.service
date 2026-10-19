@@ -1,0 +1,24 @@
+[Unit]
+Description=VulnSuite Linux server monitoring agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vulnsuite-agent
+Group=vulnsuite-agent
+# Debian/Ubuntu log read access; adjust for the host distribution.
+SupplementaryGroups=adm
+WorkingDirectory=/opt/vulnsuite
+ExecStart=/opt/vulnsuite/.venv/bin/python -m vulnsuite.protection.agent --config /etc/vulnsuite-protection/agent.json
+Restart=on-failure
+RestartSec=5
+StateDirectory=vulnsuite-agent
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

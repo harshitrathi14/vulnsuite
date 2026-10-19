@@ -8,21 +8,26 @@
 #   api         - FastAPI app (port 8000)
 #   worker      - Celery worker (all queues)
 #   beat        - Celery beat scheduler (nightly Azure discovery)
-#   dashboard   - Streamlit CISO dashboard (port 8501)
+#   dashboard   - Legacy Streamlit dashboard (opt-in profile, localhost only)
 #
-# For BFSI production: replace the default passwords below, mount
+# Configure deploy/auth.env.example before starting; no credentials default.
+# For BFSI production: mount
 # Azure credentials from Key Vault via an init container, and add
 # TLS termination at the ingress (nginx/Traefik/Azure App Gateway).
-
-version: "3.9"
 
 x-common-env: &common-env
   VULNSUITE_ENVIRONMENT: "production"
   VULNSUITE_LOG_LEVEL: "INFO"
-  VULNSUITE_DB_URL: "postgresql+asyncpg://vulnsuite:${DB_PASSWORD:-changeme}@postgres:5432/vulnsuite"
+  VULNSUITE_DB_URL: "postgresql+asyncpg://vulnsuite_app:${DB_PASSWORD:?Set a random URL-safe application database password}@postgres:5432/vulnsuite"
   VULNSUITE_REDIS_URL: "redis://redis:6379/0"
-  VULNSUITE_AUTH_SESSION_SECRET: "${SESSION_SECRET:-changeme-in-prod}"
-  VULNSUITE_AUTH_OIDC_ISSUER: "${OIDC_ISSUER:-}"
+  VULNSUITE_AUTH_OIDC_ISSUER: "${OIDC_ISSUER:?Set the exact trusted HTTPS identity-provider issuer}"
+  VULNSUITE_AUTH_OIDC_AUDIENCE: "${OIDC_AUDIENCE:-vulnsuite-api}"
+  VULNSUITE_AUTH_JWKS_URL: "${OIDC_JWKS_URL:?Set the trusted HTTPS public JWKS URL}"
+  VULNSUITE_AUTH_JWT_ALGORITHMS: '${OIDC_JWT_ALGORITHMS:-["RS256"]}'
+  VULNSUITE_AUTH_TENANT_CLAIM: "${OIDC_TENANT_CLAIM:-tenant_id}"
+  VULNSUITE_AUTH_ROLES_CLAIM: "${OIDC_ROLES_CLAIM:-roles}"
+  VULNSUITE_AUTH_JWKS_CACHE_SECONDS: "${OIDC_JWKS_CACHE_SECONDS:-300}"
+  VULNSUITE_AUTH_MAX_TOKEN_LIFETIME_SECONDS: "${OIDC_MAX_TOKEN_LIFETIME_SECONDS:-28800}"
   # Cloud creds — Azure first, AWS + GCP for Phase 2 parity
   AZURE_CLIENT_ID: "${AZURE_CLIENT_ID:-}"
   AZURE_CLIENT_SECRET: "${AZURE_CLIENT_SECRET:-}"
@@ -38,7 +43,7 @@ x-common-env: &common-env
   VULNSUITE_K8S_KUBECONFIG_PATH: "/var/lib/vulnsuite/secrets/kubeconfig"
   # API security: gates DAST. Empty allowlist + active=false means DAST is off
   # by default; ops must explicitly opt in per environment.
-  VULNSUITE_APISEC_DAST_ALLOWLIST: "${DAST_ALLOWLIST:-}"
+  VULNSUITE_APISEC_DAST_ALLOWLIST: "${DAST_ALLOWLIST:-[]}"
   VULNSUITE_APISEC_ALLOW_ACTIVE_SCAN: "${DAST_ALLOW_ACTIVE:-false}"
   VULNSUITE_APISEC_NUCLEI_SEVERITY_FLOOR: "${NUCLEI_SEVERITY_FLOOR:-medium}"
   # ASM passive defaults — nmap validation off until you've vetted targets
@@ -57,12 +62,16 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: vulnsuite
-      POSTGRES_USER: vulnsuite
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      # PostgreSQL's POSTGRES_USER is always a bootstrap superuser. Application
+      # processes use the separate non-bypass role created by the init script.
+      POSTGRES_USER: vulnsuite_bootstrap
+      POSTGRES_PASSWORD: "${POSTGRES_BOOTSTRAP_PASSWORD:?Set a distinct random bootstrap database password}"
+      VULNSUITE_APP_DB_PASSWORD: "${DB_PASSWORD:?Set a random URL-safe application database password}"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./postgres/10-application-role.sh:/docker-entrypoint-initdb.d/10-application-role.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vulnsuite"]
+      test: ["CMD-SHELL", "pg_isready -U vulnsuite_bootstrap -d vulnsuite"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -153,6 +162,9 @@ services:
     networks: [vulnsuite]
 
   dashboard:
+    # Legacy UI accepts a manually entered tenant and has no identity binding.
+    # The authenticated protection /console is the supported operations UI.
+    profiles: ["legacy-dashboard"]
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -162,7 +174,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     command: >
       streamlit run vulnsuite/dashboard/streamlit_app.py
       --server.port 8501

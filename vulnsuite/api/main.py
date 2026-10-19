@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -24,11 +23,12 @@ from ..workers.tasks import (
     scan_asset,
     validate_dast_targets,
 )
+from .auth import Principal, get_principal, require_role
 
 settings = get_settings()
 app = FastAPI(
     title="VulnSuite API",
-    version="0.2.0",
+    version="0.4.0",
     description="Cybersecurity vulnerability analysis suite (BFSI-tuned)",
 )
 
@@ -39,44 +39,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-ROLES = {"admin", "analyst", "viewer", "auditor"}
-
-
-class Principal(BaseModel):
-    sub: str
-    tenant_id: UUID
-    role: str
-    email: str | None = None
-
-
-async def get_principal(
-    authorization: Annotated[str | None, Header()] = None,
-    x_tenant_id: Annotated[str | None, Header()] = None,
-) -> Principal:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
-    if not x_tenant_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="missing X-Tenant-Id header")
-    return Principal(
-        sub="stub-user",
-        tenant_id=UUID(x_tenant_id),
-        role="analyst",
-        email="stub@vulnsuite.local",
-    )
-
-
-def require_role(*allowed: str):
-    def _check(p: Principal = Depends(get_principal)) -> Principal:
-        if p.role not in allowed:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"role {p.role} not in {allowed}",
-            )
-        return p
-
-    return _check
-
 
 class AssetCreate(BaseModel):
     name: str

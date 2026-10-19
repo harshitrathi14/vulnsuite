@@ -1,0 +1,23 @@
+[Unit]
+Description=VulnSuite server protection control service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vulnsuite-protection
+Group=vulnsuite-protection
+WorkingDirectory=/opt/vulnsuite
+Environment=VULNSUITE_PROTECTION_CONFIG=/etc/vulnsuite-protection/server.json
+ExecStart=/opt/vulnsuite/.venv/bin/uvicorn vulnsuite.protection.service:create_app --factory --host 127.0.0.1 --port 8010 --workers 1
+Restart=on-failure
+RestartSec=5
+StateDirectory=vulnsuite-protection
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

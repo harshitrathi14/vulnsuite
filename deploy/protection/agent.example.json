@@ -1,0 +1,37 @@
+{
+  "server_url": "https://protection.example.org",
+  "token": "REPLACE_WITH_UNIQUE_RANDOM_HOST_TOKEN",
+  "state_path": "/var/lib/vulnsuite-agent/state.json",
+  "poll_seconds": 10,
+  "logs": [
+    {
+      "path": "/var/log/auth.log",
+      "kind": "ssh"
+    }
+  ],
+  "watch_files": [
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/ssh/sshd_config",
+    "/etc/crontab"
+  ],
+  "allow_response": false,
+  "protected_networks": [
+    "10.0.0.0/24"
+  ],
+  "permitted_networks": [
+    "10.0.0.0/8"
+  ],
+  "process_monitor": {
+    "enabled": false,
+    "allowed_executables": [],
+    "known_bad_sha256": {}
+  },
+  "malware": {
+    "enabled": false,
+    "clamav": true,
+    "interval_seconds": 300,
+    "scan_files": [],
+    "known_bad_sha256": {}
+  }
+}

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vulnsuite"
-version = "0.1.0"
-description = "Cybersecurity vulnerability analysis suite (BFSI-tuned, multi-tool, risk-prioritized)"
+version = "0.4.0"
+description = "Vulnerability assessment, server intrusion monitoring and reviewed security response"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Proprietary" }
@@ -41,7 +41,7 @@ dependencies = [
     # API layer
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
-    "python-jose[cryptography]>=3.3",
+    "python-jose[cryptography]>=3.5",
     "python-multipart>=0.0.9",
 
     # Workers
@@ -75,6 +75,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+windows = ["pywin32>=308; sys_platform == 'win32'"]
 dev = [
     "pytest>=8.1",
     "pytest-asyncio>=0.23",
@@ -160,3 +161,6 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
+
+[tool.setuptools.package-data]
+"vulnsuite.protection" = ["console.html", "console.js", "console.css", "*.ps1"]

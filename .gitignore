@@ -6,3 +6,24 @@ __pycache__/
 venv/
 ~$*
 .claude/settings.local.json
+
+# Local credentials and runtime state (examples remain versioned).
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Generated local outputs and prior collateral copies.
+.coverage*
+htmlcov/
+build/
+dist/
+/collateral/archive/

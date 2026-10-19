@@ -1,0 +1,26 @@
+{
+  "response": {
+    "hosts": {
+      "windows-server-a": {
+        "enabled": false,
+        "platform": "windows",
+        "allowed_actions": [
+          "quarantine_file",
+          "restore_file",
+          "isolate_host",
+          "release_host"
+        ],
+        "isolation": {
+          "management_networks": [
+            "10.10.0.5/32"
+          ],
+          "management_ports": [
+            443,
+            3389,
+            5986
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,69 @@
+VulnSuite 0.4 — Windows containment validation
+Date: 19 October 2026
+
+Implemented
+- Windows platform-bound quarantine, restoration, host isolation and release.
+- Independent control-plane approval and host-local policy checks.
+- Exact path/hash evidence, private NTFS vaults, original security restoration,
+  no-overwrite moves, durable intermediate state and approved crash recovery.
+- Windows Defender Firewall helper, pinned management exceptions, independent
+  scheduled recovery and local cleanup before networking.
+- Reviewed Sysmon SHA256 matches, response-health reporting and durable receipts,
+  including acknowledgement of earlier attempts after new response is disabled.
+
+Automated validation
+- Combined protection/security suite: 280 passed, zero skipped, 2 existing
+  FastAPI startup-event deprecation warnings; duration 56.91 seconds.
+- Reproduction command (from the repository root, with dependencies installed):
+  python -m pytest -q --confcutdir=tests/protection -o addopts='' tests/protection tests/security
+  Install PowerShell on PATH or set VULNSUITE_TEST_PWSH to its executable to include
+  all six memory-only PowerShell orchestration cases.
+- Includes 6 PowerShell isolation-orchestration cases using memory-only native
+  substitutes. These do not execute live firewall or scheduled-task operations.
+- Python compilation passed. Windows JSON configuration examples parse, specify
+  the Windows platform and default response to disabled. Guide local links pass.
+- Final isolation helper passed PowerShell parsing. SHA256:
+  60ab6c8526c589af5bda7c7f967990e7d77dc33acd878624aa2415ed268e02a8
+- Temporary wheel inspection confirmed Windows modules, the PowerShell helper
+  and console assets are included by package configuration.
+
+Narrow native Windows check
+- 7 disposable file-operation contract cases passed on Windows build 26200.9448,
+  PowerShell 5.1.26100.9444, 64-bit; see windows_native_contract.json.
+- Confirmed relative NtSetInformationFile rename with pinned directory handles,
+  required sharing semantics, and refusal of post-open junction redirection.
+- All newly created temporary fixture objects were cleaned.
+- No production files, file ACLs, live firewall rules or scheduled tasks changed.
+- The opt-in diagnostic is retained at:
+  ../../tests/protection/windows_quarantine_native_contract.ps1
+
+Executive material
+- Updated both PPT copies, companion review PDF and TXT/HTML email.
+- 20 slides, 153 native PowerPoint bullet paragraphs, 24 email bullet items.
+- Windows containment and staging limitations are explicit in the material.
+- Companion PDF/contact sheet visually checked for layout and clipping.
+  The PDF is independently generated from the same content; it is not a native
+  PowerPoint rendering. See collateral-validation.json and contact-sheet.jpg.
+- Previous deliverables retained locally under collateral/archive (not published).
+
+Remaining deployment validation
+- Full privileged Windows quarantine/restore: pywin32, service privileges,
+  original owner/group/DACL, busy files, streams, reparse paths and crash recovery.
+- Actual IPv4/IPv6 filtering, management reachability, GPO compatibility, rule
+  installation time, independent expiry, Task Scheduler outage and reboot recovery.
+- Windows expiry depends on local tasks/services; it is not a kernel rule TTL.
+- Quarantine does not terminate an already-running process or scan its memory.
+- Windows containment remains disabled until configured and staging is accepted.
+- No production rollout or email sending was performed.
+
+GitHub publication verification
+- Prepared additively against remote main dd5b320542303518b18c21956b53e2001a78b334.
+- Preserved upstream-only phase 3/4 tests and other existing repository files.
+- Re-ran protection/security tests in the publication checkout: 280 passed,
+  zero skipped, 2 existing deprecation warnings; duration 38.60 seconds.
+- Existing phase 2/3/4 regression tests: 68 passed; duration 3.94 seconds.
+- Total publication checks: 348 automated tests passed across the two runs.
+- Regenerated collateral with repository-relative implementation links; validated
+  slide count, native bullet paragraphs, matching PPT copies and deployment JSON.
+- Staged whitespace checks passed. Local caches, private credentials, runtime
+  databases and collateral backup copies are excluded from publication.

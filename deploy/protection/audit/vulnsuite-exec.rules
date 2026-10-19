@@ -1,0 +1,5 @@
+# Review load and retention on a staging x86_64 Linux host first.
+# Captures executions even when the process exits before the next /proc poll.
+-a always,exit -F arch=b64 -S execve,execveat -F success=1 -k vulnsuite_exec
+-a always,exit -F arch=b32 -S execve,execveat -F success=1 -k vulnsuite_exec
+# On aarch64 use the b64 rule only. Existing audit policy remains authoritative.

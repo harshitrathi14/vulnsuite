@@ -1,0 +1,32 @@
+{
+  "integrations": {
+    "security_operations_bridge": {
+      "enabled": false,
+      "type": "webhook",
+      "url": "https://siem.example.org/vulnsuite/events",
+      "token_env": "VULNSUITE_WEBHOOK_TOKEN",
+      "signing_key_env": "VULNSUITE_WEBHOOK_SIGNING_KEY"
+    }
+  },
+  "response": {
+    "cloud_waf": {
+      "enabled": false,
+      "provider": "cloudflare",
+      "zone_id": "00000000000000000000000000000000",
+      "ruleset_id": "00000000000000000000000000000000",
+      "token_env": "VULNSUITE_CLOUDFLARE_TOKEN",
+      "protected_networks": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+      "permitted_networks": ["0.0.0.0/0", "::/0"]
+    },
+    "hosts": {
+      "server-a": {
+        "enabled": false,
+        "allowed_actions": ["quarantine_file", "restore_file", "isolate_host", "release_host"],
+        "isolation": {
+          "management_networks": ["10.10.0.5/32"],
+          "management_ports": [22, 443]
+        }
+      }
+    }
+  }
+}

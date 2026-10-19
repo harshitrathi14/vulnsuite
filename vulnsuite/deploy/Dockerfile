@@ -35,13 +35,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /scanners
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
-    case "$arch" in amd64) gh_arch=Linux_64bit; alt_arch=linux_amd64;; \
-                    arm64) gh_arch=Linux_arm64;  alt_arch=linux_arm64;; \
+    case "$arch" in amd64) gh_arch=Linux_64bit; alt_arch=linux_amd64; cosign_arch=linux-amd64;; \
+                    arm64) gh_arch=Linux_arm64; alt_arch=linux_arm64; cosign_arch=linux-arm64;; \
                     *) echo "unsupported arch: $arch"; exit 1;; esac; \
     # Trivy
     curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${gh_arch}.tar.gz" | tar -xz -C /usr/local/bin trivy; \
     # gitleaks
-    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${alt_arch//_/_}.tar.gz" | tar -xz -C /usr/local/bin gitleaks; \
+    curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${alt_arch}.tar.gz" | tar -xz -C /usr/local/bin gitleaks; \
     # osv-scanner
     curl -fsSL -o /usr/local/bin/osv-scanner "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_${alt_arch}"; \
     chmod +x /usr/local/bin/osv-scanner; \
@@ -61,7 +61,7 @@ RUN set -eux; \
     unzip -j /tmp/nuclei.zip nuclei -d /usr/local/bin; \
     # syft + cosign
     curl -fsSL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_${alt_arch}.tar.gz" | tar -xz -C /usr/local/bin syft; \
-    curl -fsSL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-${alt_arch//_/-}"; \
+    curl -fsSL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-${cosign_arch}"; \
     chmod +x /usr/local/bin/cosign; \
     rm -f /tmp/*.zip
 
@@ -131,7 +131,20 @@ COPY --from=scanners /opt/ZAP_2.15.0/ /opt/ZAP_2.15.0/
 # Python deps + pip-installed scanners (semgrep, bandit, pip-audit, prowler, checkov)
 WORKDIR /app
 COPY pyproject.toml README.md ./
-COPY vulnsuite ./vulnsuite
+# The checkout's build context is the package directory itself. Recreate the
+# installable /app/vulnsuite package explicitly; do not copy private deployment
+# configuration, local databases, documents or generated artifacts into it.
+COPY __init__.py cli.py ./vulnsuite/
+COPY ai/ ./vulnsuite/ai/
+COPY api/ ./vulnsuite/api/
+COPY collectors/ ./vulnsuite/collectors/
+COPY compliance/ ./vulnsuite/compliance/
+COPY core/ ./vulnsuite/core/
+COPY dashboard/ ./vulnsuite/dashboard/
+COPY integrations/ ./vulnsuite/integrations/
+COPY protection/ ./vulnsuite/protection/
+COPY reporting/ ./vulnsuite/reporting/
+COPY workers/ ./vulnsuite/workers/
 RUN pip install --upgrade pip && \
     pip install . prowler==4.2.0 checkov==3.2.55
 

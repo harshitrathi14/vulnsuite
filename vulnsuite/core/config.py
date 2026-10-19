@@ -218,6 +218,16 @@ class AuthSettings(BaseSettings):
     oidc_issuer: str | None = None
     oidc_audience: str = "vulnsuite-api"
     jwt_algorithms: list[str] = Field(default_factory=lambda: ["RS256"])
+    # Exactly one trusted JWKS source; token headers never select a URL/key.
+    jwks_url: str | None = None
+    jwks_path: Path | None = None
+    jwks_cache_seconds: int = Field(default=300, ge=1, le=3600)
+    jwks_timeout_seconds: float = Field(default=5.0, ge=0.1, le=30)
+    tenant_claim: str = "tenant_id"
+    roles_claim: str = "roles"
+    clock_skew_seconds: int = Field(default=30, ge=0, le=120)
+    max_token_lifetime_seconds: int = Field(default=28800, ge=60, le=86400)
+    # Retained for configuration compatibility; bearer verification never uses it.
     session_secret: SecretStr = SecretStr("change-me-in-production")
     session_ttl_seconds: int = 28800      # 8h work day
 
@@ -277,10 +287,10 @@ class Settings(BaseSettings):
         """Return list of misconfigurations blocking production use."""
         issues: list[str] = []
         if self.is_production:
-            if self.auth.session_secret.get_secret_value() == "change-me-in-production":
-                issues.append("auth.session_secret must be set in production")
             if not self.auth.oidc_issuer:
                 issues.append("auth.oidc_issuer required in production")
+            if bool(self.auth.jwks_url) == bool(self.auth.jwks_path):
+                issues.append("exactly one auth.jwks_url or auth.jwks_path required in production")
             if self.database.echo:
                 issues.append("database.echo must be False in production")
             if self.database.url.startswith("postgresql+asyncpg://vulnsuite:vulnsuite@"):

@@ -155,7 +155,7 @@ vulnsuite/
 ## 🛡️ Security & Privacy by Design
 
 1. **Passive-only mode** — no exploitation, no auth probing, no aggressive timing. Enforced in code (nmap collector refuses `T4`/`T5` at construction time).
-2. **Multi-tenant isolation via PostgreSQL Row-Level Security** — a bug in application code cannot leak Tenant A's findings to Tenant B.
+2. **Tenant-bound API access and PostgreSQL Row-Level Security** — the API verifies the signed tenant claim and binds it to every database transaction; forced row policies restrict reads and writes to that tenant. This depends on trusted tenant binding and restricted application credentials. It does not isolate tenants from someone able to execute arbitrary SQL with those credentials or alter the table policies.
 3. **Secrets never stored in findings DB** — TruffleHog raw values are explicitly redacted; gitleaks uses `--redact`.
 4. **Air-gap support on every network-dependent component** — Trivy offline DB, OSV-Scanner local DB, Semgrep offline rules, EPSS offline CSV.
 5. **No telemetry egress** — Semgrep `--metrics off`, Bandit offline, Trivy `--skip-db-update` option.
@@ -167,18 +167,31 @@ vulnsuite/
 
 ## 🚀 Quick Start
 
+Run these commands from the directory containing this README and `pyproject.toml`. For an existing PostgreSQL volume, complete the role and ownership migration in [the deployment guide](deploy/AUTH_DEPLOYMENT.md) before starting the updated application.
+
 ```bash
-# Clone and build
-git clone <repo> && cd vulnsuite
-cp .env.example .env  # then fill in DB/Azure/OIDC secrets
+# Create a private configuration file outside the checkout.
+mkdir -p "$HOME/.config/vulnsuite"
+install -m 600 deploy/auth.env.example "$HOME/.config/vulnsuite/compose.env"
 
-# Bring up the full stack
-docker compose -f deploy/docker-compose.yml up -d
+# Edit that file: set independent DB_PASSWORD and POSTGRES_BOOTSTRAP_PASSWORD,
+# plus the trusted OIDC issuer, audience, public JWKS URL and claim mappings.
+# Generate each database password independently, for example: openssl rand -hex 32
 
-# Access
-# API:       http://localhost:8000/docs
-# Dashboard: http://localhost:8501
+# Validate without printing resolved credentials, then build and start.
+docker compose --env-file "$HOME/.config/vulnsuite/compose.env" \
+  -f deploy/docker-compose.yml config --quiet
+docker compose --env-file "$HOME/.config/vulnsuite/compose.env" \
+  -f deploy/docker-compose.yml up -d --build
+
+# API documentation: http://localhost:8000/docs
+# Protected routes require an IdP access token and matching X-Tenant-Id.
 ```
+
+- Fresh database volumes create a separate `NOSUPERUSER NOBYPASSRLS` application role. Bootstrap administrator credentials stay in the database container. Missing credentials or OIDC configuration stop Compose startup.
+- The authenticated SOC console is supplied by the separately deployed protection service at `/console`; follow [the operations deployment guide](../deploy/protection/OPERATIONS.md). This Compose file starts the assessment API, database, workers and scheduler.
+- The old Streamlit dashboard is disabled by default. Its explicit `legacy-dashboard` profile binds only to localhost and retains manual tenant selection; it is unsuitable as a public multi-tenant interface.
+- Configure HTTPS ingress and verify a staging identity-provider/database deployment before production use. See [database migration, credential requirements and staging checks](deploy/AUTH_DEPLOYMENT.md).
 
 ---
 
@@ -208,3 +221,16 @@ docker compose -f deploy/docker-compose.yml up -d
 Proprietary — internal BFSI deployment only. Contact the security team for external-use licensing.
 
 **Classification:** CONFIDENTIAL — INTERNAL USE ONLY
+
+## Server intrusion monitoring and response
+
+An initial Linux server-protection module is available alongside vulnerability scanning. It provides SSH/API access alerts, file-integrity and suspicious-process monitoring, optional ClamAV/hash detection, cross-host lateral-movement signals, ModSecurity/OWASP CRS integration, sensor health, durable audit records, and operator-requested temporary IP blocking. See [deployment, supported coverage and limitations](protection/README.md). It is a separately authenticated, single-organisation service and is not a complete EDR or WAF.
+
+### Operational enhancements
+
+Verified JWT/SSO access-token validation, role checks, a unified operations console, central agent enrollment, Windows/Linux audit telemetry, incident workflows, notification delivery and reviewed containment are implemented. See [the operations guide](protection/OPERATIONS.md) for configuration, tests and deployment boundaries.
+
+Release 0.4 adds Windows-native quarantine/restoration and temporary firewall
+isolation/release, using the same separate-actor approval workflow as Linux.
+Windows response requires explicit local enablement, native ACL/helper setup and
+staging validation; see the [Windows setup and recovery guide](../deploy/protection/windows/README.md).

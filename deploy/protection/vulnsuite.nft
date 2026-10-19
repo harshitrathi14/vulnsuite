@@ -1,0 +1,21 @@
+# Load only on enrolled hosts where bounded response has been enabled.
+# This creates a dedicated table; it does not flush the host ruleset.
+table inet vulnsuite {
+    set blocked_v4 {
+        type ipv4_addr
+        flags timeout
+        timeout 5m
+        size 4096
+    }
+    set blocked_v6 {
+        type ipv6_addr
+        flags timeout
+        timeout 5m
+        size 4096
+    }
+    chain input {
+        type filter hook input priority -10; policy accept;
+        ip saddr @blocked_v4 counter drop
+        ip6 saddr @blocked_v6 counter drop
+    }
+}

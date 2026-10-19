@@ -1,0 +1,6 @@
+# Optional systemd drop-in for vulnsuite-agent.service, after response review.
+# Install as /etc/systemd/system/vulnsuite-agent.service.d/response.conf.
+# Also enable allow_response in BOTH configs and load the dedicated nft rules.
+[Service]
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN

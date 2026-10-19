@@ -1,0 +1,19 @@
+{
+  "database": "/var/lib/vulnsuite-protection/events.db",
+  "operator_token": "REPLACE_WITH_UNIQUE_RANDOM_OPERATOR_TOKEN",
+  "hosts": {
+    "internal-server-01": {
+      "token": "REPLACE_WITH_UNIQUE_RANDOM_HOST_TOKEN",
+      "allow_response": false,
+      "protected_networks": [
+        "10.0.0.0/24"
+      ],
+      "permitted_networks": [
+        "10.0.0.0/8"
+      ],
+      "addresses": [
+        "10.0.1.10"
+      ]
+    }
+  }
+}
