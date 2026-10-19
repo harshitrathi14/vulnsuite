@@ -128,6 +128,7 @@ DESCRIPTIONS = [
 ]
 
 SUBJECT = 'Introducing VulnSuite — vulnerability assessment and server protection'
+DEVELOPMENT_NOTE = 'VulnSuite was developed with assistance from frontier AI models, including Anthropic’s Claude Fable 5.1 and OpenAI’s GPT-6 Astra, supporting architecture, implementation, testing and documentation. Both are positioned by their respective providers among their most capable models for demanding coding and problem-solving work.'
 SECTIONS = [
 ('Vulnerability assessment', [
  'Application and software risk: static code analysis, dependency checks, secret detection, software bills of materials and supply-chain evidence.',
@@ -287,14 +288,14 @@ def generate():
     prs.save(ROOT/'VulnSuite_Executive_Deck_FINAL.pptx')
     shutil.copy2(ROOT/'VulnSuite_Executive_Deck_FINAL.pptx',ROOT/'VulnSuite_Executive_Deck.pptx')
     intro='Introducing VulnSuite, a security suite that brings together vulnerability assessment, server monitoring and approved response. The attached briefing outlines its capabilities, operating controls and validation requirements for evaluating deployment in your organisation.'
-    lines=['Subject: '+SUBJECT,'','Classification: CONFIDENTIAL — INTERNAL USE ONLY','','Dear [CISO Name],','',intro,'']
+    lines=['Subject: '+SUBJECT,'','Classification: CONFIDENTIAL — INTERNAL USE ONLY','','Dear [CISO Name],','',intro,'',DEVELOPMENT_NOTE,'']
     for i,(heading,items) in enumerate(SECTIONS,1):
         lines += [f'{i}. {heading.upper()}']+['   • '+item for item in items]+['']
     lines += ['Regards,','[Your Name]','[Your Role]','[Phone] | [Email]','','CONFIDENTIAL — INTERNAL USE ONLY']
     (ROOT/'VulnSuite_Intro_Email.txt').write_text('\n'.join(lines)+'\n',encoding='utf-8')
     sections=''.join('<h2>'+str(i)+'. '+escape(h)+'</h2><ul>'+''.join('<li>'+escape(v)+'</li>' for v in items)+'</ul>' for i,(h,items) in enumerate(SECTIONS,1))
     page='''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VulnSuite briefing</title><style>body{margin:0;background:#f3f6fa;color:#334155;font:16px/1.6 Arial,sans-serif}main{max-width:820px;margin:24px auto;background:white;padding:36px;border-top:6px solid #f38020}h1{color:#0a2540;font-size:26px;line-height:1.3}h2{color:#0a2540;font-size:19px;margin-top:28px}li{margin:9px 0}small{color:#64748b}ul{padding-left:25px}</style></head><body><main>'''
-    page+='<small>CONFIDENTIAL — INTERNAL USE ONLY</small><h1>'+escape(SUBJECT)+'</h1><p>Dear [CISO Name],</p><p>'+escape(intro)+'</p>'+sections+'<p>Regards,<br>[Your Name]<br>[Your Role]<br>[Phone] | [Email]</p></main></body></html>'
+    page+='<small>CONFIDENTIAL — INTERNAL USE ONLY</small><h1>'+escape(SUBJECT)+'</h1><p>Dear [CISO Name],</p><p>'+escape(intro)+'</p><p>'+escape(DEVELOPMENT_NOTE)+'</p>'+sections+'<p>Regards,<br>[Your Name]<br>[Your Role]<br>[Phone] | [Email]</p></main></body></html>'
     (ROOT/'VulnSuite_Intro_Email.html').write_text(page,encoding='utf-8')
     (ROOT/'VulnSuite_LinkedIn_Post.txt').write_text(LINKEDIN,encoding='utf-8')
     print(f'Generated {len(SLIDES)} slides, native bullet lists, TXT/HTML email, LinkedIn draft and companion review PDF.')

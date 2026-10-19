@@ -6,6 +6,8 @@ Dear [CISO Name],
 
 Introducing VulnSuite, a security suite that brings together vulnerability assessment, server monitoring and approved response. The attached briefing outlines its capabilities, operating controls and validation requirements for evaluating deployment in your organisation.
 
+VulnSuite was developed with assistance from frontier AI models, including Anthropic’s Claude Fable 5.1 and OpenAI’s GPT-6 Astra, supporting architecture, implementation, testing and documentation. Both are positioned by their respective providers among their most capable models for demanding coding and problem-solving work.
+
 1. VULNERABILITY ASSESSMENT
    • Application and software risk: static code analysis, dependency checks, secret detection, software bills of materials and supply-chain evidence.
    • Infrastructure and API assessment: network services, TLS, cloud configurations, containers, infrastructure as code, Kubernetes and exposed applications/APIs.
