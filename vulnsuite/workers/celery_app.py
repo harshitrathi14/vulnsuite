@@ -34,14 +34,19 @@ celery_app.conf.update(
         "vulnsuite.workers.tasks.discover_gcp_assets": {"queue": "vulnsuite.discovery"},
         "vulnsuite.workers.tasks.discover_domains": {"queue": "vulnsuite.discovery"},
         "vulnsuite.workers.tasks.discover_kubernetes_clusters": {"queue": "vulnsuite.discovery"},
+        "vulnsuite.workers.tasks.scheduled_discovery": {"queue": "vulnsuite.discovery"},
         "vulnsuite.workers.tasks.generate_report": {"queue": "vulnsuite.report"},
         # AI enrichment is long-running (Batches API polling) and must
-        # never compete with scan workers for slots.
+        # never compete with scan workers for slots. Every queue listed
+        # here must appear in the worker's --queues (deploy/docker-compose.yml);
+        # tests/test_worker_wiring.py enforces that.
         "vulnsuite.workers.tasks.ai_enrich_findings": {"queue": "vulnsuite.ai"},
     },
     beat_schedule={
+        # Fans out discover_assets per configured tenant; discover_assets
+        # itself needs a tenant_id and cannot be scheduled directly.
         "daily-azure-discovery": {
-            "task": "vulnsuite.workers.tasks.discover_assets",
+            "task": "vulnsuite.workers.tasks.scheduled_discovery",
             "schedule": 86400.0,   # every 24h
         },
     },

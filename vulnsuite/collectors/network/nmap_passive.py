@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from ...core.schema import Evidence, Finding, Module, ScanResult, Severity
+from ...core.scopes import is_private_address, resolve_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,11 @@ class NmapPassiveCollector:
         top_ports: int = 1000,
         allow_public: bool = False,
         extra_scripts: str = "default,safe",
+        resolver=None,
     ) -> None:
+        """`allow_public` means the caller has already authorised this
+        public target against the tenant's scopes (core/scopes.py). The
+        collector still refuses hostnames it cannot resolve."""
         if shutil.which(binary) is None:
             raise NmapNotInstalled(f"{binary!r} not found on PATH")
         if timing not in ("T0", "T1", "T2", "T3"):
@@ -94,6 +99,7 @@ class NmapPassiveCollector:
         self.top_ports = top_ports
         self.allow_public = allow_public
         self.extra_scripts = extra_scripts
+        self.resolver = resolver or resolve_addresses
 
     # ---------- public ----------
 
@@ -108,7 +114,7 @@ class NmapPassiveCollector:
         findings: list[Finding] = []
 
         try:
-            self._validate_target(target)
+            await self._validate_target(target)
             xml_bytes = await self._run(target)
             findings = self._normalize(xml_bytes, tenant_id, asset_id, target)
         except asyncio.TimeoutError:
@@ -130,17 +136,25 @@ class NmapPassiveCollector:
 
     # ---------- internals ----------
 
-    def _validate_target(self, target: str) -> None:
-        """Refuse public-internet targets unless explicitly allowed."""
+    async def _validate_target(self, target: str) -> None:
+        """Refuse public-internet targets unless explicitly allowed.
+
+        Hostnames are resolved and every answer checked — previously a
+        hostname skipped the check entirely, so `host=scanme.example`
+        bypassed the private-only policy."""
         try:
-            net = ipaddress.ip_network(target, strict=False)
+            addresses = [ipaddress.ip_network(target, strict=False)]
         except ValueError:
-            # Hostname — defer to DNS at scan time; allow.
-            return
-        if not net.is_private and not self.allow_public:
+            addresses = await self.resolver(target)
+            if not addresses:
+                raise PermissionError(
+                    f"Refusing scan of {target!r}: hostname does not resolve"
+                )
+        public = [str(a) for a in addresses if not is_private_address(a)]
+        if public and not self.allow_public:
             raise PermissionError(
-                f"Refusing scan of public range {target}; "
-                f"set allow_public=True and log explicit authorization."
+                f"Refusing scan of public target {target} ({public}); "
+                f"bind a tenant scope and let the worker authorise it."
             )
 
     async def _run(self, target: str) -> bytes:

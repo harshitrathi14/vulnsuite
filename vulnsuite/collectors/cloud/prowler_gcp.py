@@ -39,12 +39,13 @@ class ProwlerGCPCollector:
         tenant_id: UUID,
         asset_id: UUID,
         project_ids: list[str] | None = None,
+        credentials_file: str | None = None,
     ) -> ScanResult:
         started = datetime.now(timezone.utc)
         findings: list[Finding] = []
         errors: list[str] = []
         try:
-            raw = await self._run(project_ids or [])
+            raw = await self._run(project_ids or [], credentials_file)
             findings = self._normalize(raw, tenant_id, asset_id)
         except asyncio.TimeoutError:
             errors.append(f"prowler gcp timeout after {self.timeout}s")
@@ -61,7 +62,9 @@ class ProwlerGCPCollector:
             errors=errors,
         )
 
-    async def _run(self, project_ids: list[str]) -> list[dict]:
+    async def _run(
+        self, project_ids: list[str], credentials_file: str | None = None,
+    ) -> list[dict]:
         outdir = tempfile.mkdtemp(prefix="prowler-gcp-")
         cmd = [
             self.binary,
@@ -74,6 +77,9 @@ class ProwlerGCPCollector:
         if project_ids:
             # Without --project-ids, prowler walks every project the credential can see.
             cmd += ["--project-ids", *project_ids]
+        if credentials_file:
+            # Per-tenant service account; never the worker's ambient identity.
+            cmd += ["--credentials-file", credentials_file]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

@@ -141,7 +141,7 @@ class BanditCollector:
             cmd += ["--exclude", ",".join(self.exclude_paths)]
         if self.config_file:
             cmd += ["--configfile", self.config_file]
-        cmd.append(target)
+        cmd += ["--", target]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

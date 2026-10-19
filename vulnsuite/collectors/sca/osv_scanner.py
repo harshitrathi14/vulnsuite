@@ -113,7 +113,7 @@ class OSVScannerCollector:
             # for air-gapped BFSI deployments.
             cmd += ["--offline-vulnerabilities",
                     "--local-db-path", self.offline_db_dir]
-        cmd.append(target)
+        cmd += ["--", target]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

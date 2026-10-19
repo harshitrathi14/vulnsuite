@@ -125,7 +125,7 @@ class SemgrepCollector:
             for pack in self.rule_packs:
                 cmd += ["--config", pack]
 
-        cmd.append(target)
+        cmd += ["--", target]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,

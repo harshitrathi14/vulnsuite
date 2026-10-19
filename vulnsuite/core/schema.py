@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Callable, ClassVar
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+
+from . import targets as _targets
 
 
 # ---------- Enums ----------
@@ -185,6 +187,41 @@ class ScanTargets(BaseModel):
     gcp_projects: list[str] = Field(default_factory=list)
     dast_mode: DASTMode = DASTMode.OFF
 
+    # Every string here reaches a scanner command line or target file, so
+    # each field gets a format rule (core/targets.py). Path fields are
+    # additionally confined to the worker's workspace root at scan time.
+    _FORMAT_RULES: ClassVar[dict[str, Callable[[str, str], str]]] = {
+        "repo": _targets.safe_path,
+        "image": _targets.safe_oci_reference,
+        "host": lambda v, f: _targets.safe_host(v, f, allow_network=True),
+        "tls_endpoint": _targets.safe_host_port,
+        "iac_paths": _targets.safe_path,
+        "terraform_plan_paths": _targets.safe_path,
+        "helm_chart_paths": _targets.safe_path,
+        "k8s_manifest_paths": _targets.safe_path,
+        "kube_context": _targets.safe_kube_context,
+        "kubeconfig_path": _targets.safe_path,
+        "root_domains": lambda v, f: _targets.safe_host(v, f),
+        "api_specs": _targets.safe_path_or_url,
+        "api_base_urls": _targets.safe_url,
+        "sbom_paths": _targets.safe_path,
+        "vex_paths": _targets.safe_path,
+        "artifacts": _targets.safe_token,
+        "aws_accounts": _targets.safe_aws_account,
+        "gcp_projects": _targets.safe_gcp_project,
+    }
+
+    @field_validator(
+        "repo", "image", "host", "tls_endpoint", "kube_context", "kubeconfig_path",
+    )
+    @classmethod
+    def _validate_scalar(cls, value: str | None, info) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            return None
+        return cls._FORMAT_RULES[info.field_name](value, info.field_name)
+
     @field_validator(
         "iac_paths",
         "terraform_plan_paths",
@@ -200,12 +237,15 @@ class ScanTargets(BaseModel):
         "gcp_projects",
     )
     @classmethod
-    def _normalize_list(cls, values: list[str]) -> list[str]:
+    def _normalize_list(cls, values: list[str], info) -> list[str]:
+        rule = cls._FORMAT_RULES[info.field_name]
         seen: set[str] = set()
         out: list[str] = []
         for value in values:
-            normalized = value.strip()
-            if normalized and normalized not in seen:
+            if not value.strip():
+                continue
+            normalized = rule(value, info.field_name)
+            if normalized not in seen:
                 seen.add(normalized)
                 out.append(normalized)
         return out

@@ -63,10 +63,22 @@ class AzureInventoryCollector:
         self.page_size = page_size
         self.management_groups = management_groups
 
-    async def discover(self, tenant_id: UUID) -> list[Asset]:
-        cred = DefaultAzureCredential()
+    async def discover(
+        self,
+        tenant_id: UUID,
+        subscription_ids: list[str] | None = None,
+        credential=None,
+    ) -> list[Asset]:
+        """`credential` is the tenant's own service principal (built by the
+        worker from core.cloud_accounts); `subscription_ids` restricts the
+        walk to the subscriptions bound to the tenant. Both default to the
+        legacy ambient behaviour only when the caller passes nothing."""
+        cred = credential if credential is not None else DefaultAzureCredential()
         try:
             sub_ids = await self._list_subscriptions(cred)
+            if subscription_ids is not None:
+                allowed = set(subscription_ids)
+                sub_ids = [s for s in sub_ids if s in allowed]
             if not sub_ids:
                 logger.warning("no Azure subscriptions accessible")
                 return []

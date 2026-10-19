@@ -20,7 +20,32 @@ if "celery" not in sys.modules:
         return decorator
 
     celery_module.shared_task = shared_task
+
+    class Celery:
+        """Enough of celery.Celery for workers/celery_app.py to import;
+        `conf` is a plain dict so tests can read routes and beat schedule."""
+
+        def __init__(self, *args, **kwargs):
+            self.conf = {}
+
+    celery_module.Celery = Celery
     sys.modules["celery"] = celery_module
+
+try:
+    import redis  # noqa: F401
+except ImportError:  # worker modules import redis.asyncio at module load
+    redis_module = types.ModuleType("redis")
+    redis_asyncio = types.ModuleType("redis.asyncio")
+
+    class _Redis:
+        @classmethod
+        def from_url(cls, url, **kwargs):
+            return cls()
+
+    redis_asyncio.Redis = _Redis
+    redis_module.asyncio = redis_asyncio
+    sys.modules["redis"] = redis_module
+    sys.modules["redis.asyncio"] = redis_asyncio
 
 from vulnsuite.core.schema import Evidence, Finding, Module, Severity
 

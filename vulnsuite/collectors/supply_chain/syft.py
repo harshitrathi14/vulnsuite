@@ -29,7 +29,7 @@ class SyftCollector:
     async def export_sbom(self, source: str) -> Path:
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
             output = Path(tmp.name)
-        cmd = [self.binary, source, "-o", "cyclonedx-json"]
+        cmd = [self.binary, "-o", "cyclonedx-json", "--", source]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

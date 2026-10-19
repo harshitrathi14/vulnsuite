@@ -67,7 +67,7 @@ class DockleCollector:
             "--exit-code", "0",
             "--exit-level", self.exit_level,
             "--no-color",
-            image,
+            "--", image,
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,

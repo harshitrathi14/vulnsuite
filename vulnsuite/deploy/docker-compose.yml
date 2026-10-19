@@ -19,7 +19,7 @@ x-common-env: &common-env
   VULNSUITE_ENVIRONMENT: "production"
   VULNSUITE_LOG_LEVEL: "INFO"
   VULNSUITE_DB_URL: "postgresql+asyncpg://vulnsuite_app:${DB_PASSWORD:?Set a random URL-safe application database password}@postgres:5432/vulnsuite"
-  VULNSUITE_REDIS_URL: "redis://redis:6379/0"
+  VULNSUITE_REDIS_URL: "redis://:${REDIS_PASSWORD:?Set a random URL-safe Redis password}@redis:6379/0"
   VULNSUITE_AUTH_OIDC_ISSUER: "${OIDC_ISSUER:?Set the exact trusted HTTPS identity-provider issuer}"
   VULNSUITE_AUTH_OIDC_AUDIENCE: "${OIDC_AUDIENCE:-vulnsuite-api}"
   VULNSUITE_AUTH_JWKS_URL: "${OIDC_JWKS_URL:?Set the trusted HTTPS public JWKS URL}"
@@ -28,6 +28,8 @@ x-common-env: &common-env
   VULNSUITE_AUTH_ROLES_CLAIM: "${OIDC_ROLES_CLAIM:-roles}"
   VULNSUITE_AUTH_JWKS_CACHE_SECONDS: "${OIDC_JWKS_CACHE_SECONDS:-300}"
   VULNSUITE_AUTH_MAX_TOKEN_LIFETIME_SECONDS: "${OIDC_MAX_TOKEN_LIFETIME_SECONDS:-28800}"
+  # Tenants the nightly beat discovery fans out to (JSON list of UUIDs).
+  VULNSUITE_SCAN_SCHEDULED_DISCOVERY_TENANTS: '${SCHEDULED_DISCOVERY_TENANTS:-[]}'
   # Cloud creds — Azure first, AWS + GCP for Phase 2 parity
   AZURE_CLIENT_ID: "${AZURE_CLIENT_ID:-}"
   AZURE_CLIENT_SECRET: "${AZURE_CLIENT_SECRET:-}"
@@ -67,6 +69,7 @@ services:
       POSTGRES_USER: vulnsuite_bootstrap
       POSTGRES_PASSWORD: "${POSTGRES_BOOTSTRAP_PASSWORD:?Set a distinct random bootstrap database password}"
       VULNSUITE_APP_DB_PASSWORD: "${DB_PASSWORD:?Set a random URL-safe application database password}"
+      VULNSUITE_MIGRATOR_DB_PASSWORD: "${DB_MIGRATOR_PASSWORD:?Set a random URL-safe schema-owner database password}"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres/10-application-role.sh:/docker-entrypoint-initdb.d/10-application-role.sh:ro
@@ -80,11 +83,15 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?Set a random URL-safe Redis password}"
+    # $$ defers expansion to the container shell so the password is read
+    # from the environment, not baked into the command line.
+    command: ["sh", "-c", "exec redis-server --save 60 1 --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -95,7 +102,13 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
-    environment: *common-env
+    environment:
+      <<: *common-env
+      # Schema-owner connection, used only by init_db at start-up. Only the
+      # API gets it; workers run with the DML-only runtime role.
+      VULNSUITE_DB_MIGRATION_URL: "postgresql+asyncpg://vulnsuite_migrator:${DB_MIGRATOR_PASSWORD:?Set a random URL-safe schema-owner database password}@postgres:5432/vulnsuite"
+      # Browser origins allowed to call the API, JSON list; empty = same-origin only.
+      VULNSUITE_API_CORS_ORIGINS: '${API_CORS_ORIGINS:-[]}'
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,7 +141,7 @@ services:
       celery -A vulnsuite.workers.celery_app worker
       --loglevel=INFO
       --concurrency=4
-      --queues=vulnsuite.default,vulnsuite.scan,vulnsuite.discovery,vulnsuite.report
+      --queues=vulnsuite.default,vulnsuite.scan,vulnsuite.discovery,vulnsuite.report,vulnsuite.ai
     # Scanner binaries expected in the image (Trivy, gitleaks, semgrep,
     # bandit, nmap, testssl.sh, prowler, dockle, osv-scanner,
     # trufflehog, pip-audit). See deploy/Dockerfile.

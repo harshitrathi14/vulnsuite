@@ -70,13 +70,23 @@ class ProwlerAzureCollector:
         self.severity_floor = severity_floor
 
     async def scan(
-        self, tenant_id: UUID, asset_id: UUID,
+        self,
+        tenant_id: UUID,
+        asset_id: UUID,
+        subscription_ids: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> ScanResult:
+        """`env` is the tenant-scoped service-principal environment built
+        by core.cloud_accounts; when given it replaces the worker's own
+        env for the prowler subprocess. `subscription_ids` restricts the
+        scan — without it prowler walks every subscription the SP can see."""
         started = datetime.now(timezone.utc)
         errors: list[str] = []
         findings: list[Finding] = []
 
-        missing = [e for e in _REQUIRED_ENV if not os.getenv(e)]
+        environ = os.environ if env is None else env
+        required = _REQUIRED_ENV[:3] if subscription_ids else _REQUIRED_ENV
+        missing = [e for e in required if not environ.get(e)]
         if missing:
             errors.append(f"missing Azure credentials: {missing}")
             return ScanResult(
@@ -87,7 +97,7 @@ class ProwlerAzureCollector:
             )
 
         try:
-            raw = await self._run()
+            raw = await self._run(subscription_ids or [], env)
             findings = self._normalize(raw, tenant_id, asset_id)
         except asyncio.TimeoutError:
             errors.append(f"prowler timeout after {self.timeout}s")
@@ -103,7 +113,9 @@ class ProwlerAzureCollector:
             findings=findings, errors=errors,
         )
 
-    async def _run(self) -> list[dict]:
+    async def _run(
+        self, subscription_ids: list[str], env: dict[str, str] | None,
+    ) -> list[dict]:
         outdir = tempfile.mkdtemp(prefix="prowler-")
         cmd = [
             self.binary, "azure",
@@ -112,6 +124,8 @@ class ProwlerAzureCollector:
             "--output-directory", outdir,
             "--severity", self.severity_floor,
         ]
+        if subscription_ids:
+            cmd += ["--subscription-id", *subscription_ids]
         if self.services:
             cmd += ["--services", *self.services]
         if self.compliance:
@@ -119,6 +133,7 @@ class ProwlerAzureCollector:
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

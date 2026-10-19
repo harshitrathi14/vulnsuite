@@ -206,8 +206,12 @@ class CachedEPSSProvider:
             loop = asyncio.new_event_loop()
         if loop.is_running():
             # Called from within an async context via a sync wrapper —
-            # punt to L1 to avoid deadlock. Caller should have pre-warmed.
-            return self._l1.get(cve.upper(), self._floor)
+            # punt to in-memory data to avoid deadlock. The offline CSV is
+            # already in memory; online, the caller should have pre-warmed.
+            key = cve.upper().strip()
+            if self._offline:
+                return max(self._offline.get(key, self._floor), self._floor)
+            return self._l1.get(key, self._floor)
         return loop.run_until_complete(self.get_many([cve])).get(
             cve.upper(), self._floor
         )

@@ -1,0 +1,5 @@
+# Scanners installed as Python packages into the image. Kept out of
+# pyproject.toml so the library itself does not depend on them; locked
+# together with it by deploy/lock-deps.sh.
+prowler==4.2.0
+checkov==3.2.55

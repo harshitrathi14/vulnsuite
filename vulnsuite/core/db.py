@@ -7,7 +7,9 @@ Every session must SET app.tenant_id before querying.
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncIterator
@@ -22,8 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .asset_rules import apply_asset_rules
+from .config import get_settings
 from .fingerprint import finding_fingerprint
 from .schema import Asset, Finding
+from .triage import acceptance_expired
+
+logger = logging.getLogger(__name__)
 
 
 DATABASE_URL = os.getenv(
@@ -85,6 +91,13 @@ class FindingRow(Base):
     is_new: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
     scan_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     fixed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # ---- analyst triage (core/triage.py); re-scans leave these alone
+    #      except to reopen an expired acceptance ----
+    owner: Mapped[str | None] = mapped_column(String(256))
+    triage_note: Mapped[str] = mapped_column(String, default="")
+    triaged_by: Mapped[str | None] = mapped_column(String(256))
+    triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
         Index("ix_findings_tenant_severity_score", "tenant_id", "severity", "risk_score"),
@@ -94,24 +107,114 @@ class FindingRow(Base):
     )
 
 
+class CloudAccountRow(Base):
+    """A cloud account a tenant is allowed to scan, plus the *reference* to
+    the credential the worker must use for it (never the secret itself).
+    See core/cloud_accounts.py for the per-provider shape of `credentials`."""
+    __tablename__ = "tenant_cloud_accounts"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(8), nullable=False)      # aws | gcp | azure
+    account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(256), default="")
+    credentials: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "provider", "account_id",
+            name="uq_cloud_accounts_tenant_provider_account",
+        ),
+    )
+
+
+class TenantScopeRow(Base):
+    """A domain or public network range a tenant is authorised to scan.
+    Private address space needs no scope. See core/scopes.py."""
+    __tablename__ = "tenant_scopes"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)        # domain | network
+    value: Mapped[str] = mapped_column(String(256), nullable=False)
+    note: Mapped[str] = mapped_column(String(512), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "kind", "value", name="uq_tenant_scopes_tenant_kind_value"),
+    )
+
+
+class AuditEventRow(Base):
+    """Append-only API audit trail. UPDATE/DELETE are rejected by the
+    `audit_events_immutable` trigger (see RLS_DDL). See api/audit.py."""
+    __tablename__ = "audit_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    actor_sub: Mapped[str] = mapped_column(String(256), nullable=False)
+    actor_email: Mapped[str | None] = mapped_column(String(320))
+    actor_roles: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    method: Mapped[str] = mapped_column(String(8), nullable=False)
+    path: Mapped[str] = mapped_column(String(512), nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    client_ip: Mapped[str | None] = mapped_column(String(64))
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    __table_args__ = (Index("ix_audit_events_tenant_time", "tenant_id", "occurred_at"),)
+
+
 # ---------- Row-Level Security ----------
 
 RLS_DDL = [
     "ALTER TABLE assets   ENABLE ROW LEVEL SECURITY;",
     "ALTER TABLE findings ENABLE ROW LEVEL SECURITY;",
+    "ALTER TABLE tenant_cloud_accounts ENABLE ROW LEVEL SECURITY;",
+    "ALTER TABLE tenant_scopes ENABLE ROW LEVEL SECURITY;",
+    "ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;",
     "ALTER TABLE assets   FORCE ROW LEVEL SECURITY;",
     "ALTER TABLE findings FORCE ROW LEVEL SECURITY;",
+    "ALTER TABLE tenant_cloud_accounts FORCE ROW LEVEL SECURITY;",
+    "ALTER TABLE tenant_scopes FORCE ROW LEVEL SECURITY;",
+    "ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;",
     # DDL runs in one transaction under the ALTER TABLE locks. Replacing these
     # named policies also upgrades existing installations without swallowing SQL
     # errors (a failed statement would otherwise abort the entire transaction).
     "DROP POLICY IF EXISTS tenant_isolation_assets ON assets;",
     "DROP POLICY IF EXISTS tenant_isolation_findings ON findings;",
+    "DROP POLICY IF EXISTS tenant_isolation_cloud_accounts ON tenant_cloud_accounts;",
     """CREATE POLICY tenant_isolation_assets ON assets
        USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
        WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);""",
     """CREATE POLICY tenant_isolation_findings ON findings
        USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
        WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);""",
+    """CREATE POLICY tenant_isolation_cloud_accounts ON tenant_cloud_accounts
+       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+       WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);""",
+    "DROP POLICY IF EXISTS tenant_isolation_scopes ON tenant_scopes;",
+    """CREATE POLICY tenant_isolation_scopes ON tenant_scopes
+       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+       WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);""",
+    "DROP POLICY IF EXISTS tenant_isolation_audit ON audit_events;",
+    """CREATE POLICY tenant_isolation_audit ON audit_events
+       USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+       WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);""",
+    # Append-only audit trail. The app role owns the table today (see
+    # deploy notes), so this stops application bugs, not a hostile DBA;
+    # split migration/runtime roles to make it tamper-evident for real.
+    """CREATE OR REPLACE FUNCTION audit_events_immutable() RETURNS trigger AS $$
+       BEGIN RAISE EXCEPTION 'audit_events is append-only'; END;
+       $$ LANGUAGE plpgsql;""",
+    "DROP TRIGGER IF EXISTS audit_events_no_rewrite ON audit_events;",
+    """CREATE TRIGGER audit_events_no_rewrite
+       BEFORE UPDATE OR DELETE ON audit_events
+       FOR EACH ROW EXECUTE FUNCTION audit_events_immutable();""",
 ]
 
 TENANT_CONTEXT_SQL = text("SELECT set_config('app.tenant_id', :tid, true)")
@@ -146,17 +249,70 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return _session_local
 
 
+_ROLE_NAME = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+_INIT_DB_LOCK_KEY = 7231987   # arbitrary; serialises init_db across API workers
+
+# Tables the runtime role may read and write. audit_events is deliberately
+# absent: it gets SELECT + INSERT only (see grant_ddl).
+_RUNTIME_TABLES = ("assets", "findings", "tenant_cloud_accounts", "tenant_scopes")
+
+
+def grant_ddl(app_role: str) -> list[str]:
+    """Least-privilege grants for the runtime role, applied by the schema
+    owner. The runtime role never owns a table, so it cannot alter RLS
+    policies or drop the audit immutability trigger."""
+    if not _ROLE_NAME.match(app_role):
+        raise ValueError(f"invalid database role name {app_role!r}")
+    return [
+        f"GRANT USAGE ON SCHEMA public TO {app_role};",
+        f"GRANT SELECT, INSERT, UPDATE, DELETE ON {', '.join(_RUNTIME_TABLES)} TO {app_role};",
+        f"GRANT SELECT, INSERT ON audit_events TO {app_role};",
+        f"REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM {app_role};",
+    ]
+
+
+_migration_engine: AsyncEngine | None = None
+
+
+def get_migration_engine() -> AsyncEngine | None:
+    """Engine for the schema-owner role (VULNSUITE_DB_MIGRATION_URL), or
+    None when unset — then DDL falls back to the runtime role (dev only)."""
+    global _migration_engine
+    url = get_settings().database.migration_url
+    if not url:
+        return None
+    if _migration_engine is None:
+        _migration_engine = create_async_engine(url, pool_size=1, max_overflow=0, pool_pre_ping=True)
+    return _migration_engine
+
+
 async def init_db() -> None:
-    """Create tables + apply RLS. Idempotent-safe for dev; use Alembic in prod."""
-    async with get_engine().begin() as conn:
+    """Create tables, apply RLS + immutability DDL, grant the runtime role.
+
+    Runs as the migration role when configured. Idempotent; serialised
+    with an advisory lock so several API workers starting at once do not
+    race each other through CREATE TABLE / CREATE POLICY."""
+    settings = get_settings()
+    engine = get_migration_engine()
+    if engine is None:
+        logger.warning(
+            "VULNSUITE_DB_MIGRATION_URL is unset: running DDL as the runtime role, "
+            "which then owns the tables and can alter its own RLS policies"
+        )
+        engine = get_engine()
+    async with engine.begin() as conn:
         bypasses_rls = await conn.scalar(text(
             "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
         ))
         if bypasses_rls is not False:
             raise RuntimeError("VulnSuite database role must be NOSUPERUSER NOBYPASSRLS")
+        await conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _INIT_DB_LOCK_KEY})
         await conn.run_sync(Base.metadata.create_all)
         for stmt in RLS_DDL:
             await conn.execute(text(stmt))
+        if get_migration_engine() is not None:
+            for stmt in grant_ddl(settings.database.app_role):
+                await conn.execute(text(stmt))
 
 
 @asynccontextmanager
@@ -259,12 +415,18 @@ _PROTECTED_STATUSES = frozenset({"false_positive", "accepted"})
 
 
 def reconcile_plan(
-    existing: dict[str, str], current: set[str],
+    existing: dict[str, str],
+    current: set[str],
+    closable: set[str] | None = None,
 ) -> dict[str, list[str]]:
     """Pure planner: decide per-fingerprint actions for one asset.
 
     existing: {fingerprint: current_status} already in the DB for this asset.
     current:  fingerprints produced by this scan.
+    closable: fingerprints whose reporting tools all completed cleanly this
+              scan. Only these may be auto-closed — a missing finding from a
+              tool that failed or timed out is "unknown", not "fixed".
+              None means every existing fingerprint is closable.
 
     Returns lists of fingerprints to insert / update / reopen / close.
     Kept side-effect-free so it is unit-testable without a database.
@@ -277,8 +439,19 @@ def reconcile_plan(
         if fp not in current
         and status != "fixed"
         and status not in _PROTECTED_STATUSES
+        and (closable is None or fp in closable)
     ]
     return {"insert": insert, "update": update, "reopen": reopen, "close": close}
+
+
+def _reporting_tools(row: FindingRow) -> set[str]:
+    """Canonical tool plus every tool dedup recorded as corroborating."""
+    tools = {row.tool}
+    raw = (row.evidence or {}).get("raw") or {}
+    for c in raw.get("corroborated_by") or []:
+        if isinstance(c, dict) and c.get("tool"):
+            tools.add(c["tool"])
+    return tools
 
 
 def _finding_to_row(
@@ -317,7 +490,10 @@ def _finding_to_row(
 
 
 async def reconcile_findings(
-    tenant_id: UUID, asset_id: UUID, findings: list[Finding],
+    tenant_id: UUID,
+    asset_id: UUID,
+    findings: list[Finding],
+    completed_tools: set[str] | None = None,
 ) -> dict[str, int]:
     """Upsert this scan's findings for one asset and auto-close the rest.
 
@@ -327,6 +503,11 @@ async def reconcile_findings(
     - Previously fixed, back  -> reopen (status=open), is_new=True
     - Was present, now gone   -> auto-close (status=fixed, fixed_at=now),
                                 unless analyst-owned (false_positive/accepted)
+                                or any tool that reported it is not in
+                                completed_tools (it failed / didn't run)
+
+    completed_tools: tools that ran to completion without errors this scan.
+    None disables the guard (every missing finding is closable).
 
     Returns counts: {new, reopened, fixed, updated, total}.
     """
@@ -342,8 +523,27 @@ async def reconcile_findings(
             )
         ).scalars().all()
         existing_rows = {r.fingerprint: r for r in rows if r.fingerprint}
+        # Expired risk acceptances rejoin the normal lifecycle: reopened
+        # here, then closed or updated like any other open finding.
+        expired = 0
+        for r in existing_rows.values():
+            if acceptance_expired(r.status, r.accepted_until, now):
+                r.status = "open"
+                r.accepted_until = None
+                r.triage_note = (
+                    f"{r.triage_note or ''}\n[auto] risk acceptance expired "
+                    f"{now:%Y-%m-%d}; reopened"
+                ).strip()
+                expired += 1
+        closable = None
+        if completed_tools is not None:
+            closable = {
+                fp for fp, r in existing_rows.items()
+                if _reporting_tools(r) <= completed_tools
+            }
         plan = reconcile_plan(
             {fp: r.status for fp, r in existing_rows.items()}, set(by_fp),
+            closable,
         )
         reopen = set(plan["reopen"])
 
@@ -389,5 +589,6 @@ async def reconcile_findings(
         "reopened": reopened,
         "fixed": len(plan["close"]),
         "updated": updated,
+        "expired": expired,
         "total": len(by_fp),
     }

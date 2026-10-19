@@ -131,7 +131,10 @@ class Orchestrator:
             asset.asset_id, len(raw_findings), len(deduped),
         )
 
-        # 4) risk-score the merged set
+        # 4) risk-score the merged set. The risk engine's EPSS lookup is
+        # sync and can't await the network from inside this loop, so
+        # prefetch every CVE first or scoring silently uses the floor.
+        await self._warm_epss(deduped)
         enriched = self.risk.enrich_batch(
             deduped, {str(asset.asset_id): asset},
         )
@@ -141,11 +144,16 @@ class Orchestrator:
 
         # 5) reconcile through tenant-scoped session (RLS does isolation).
         # Upserts by stable fingerprint, accumulates first/last_seen, and
-        # auto-closes findings that disappeared since the previous scan.
+        # auto-closes findings that disappeared since the previous scan —
+        # but only for tools that completed cleanly. A collector that
+        # crashed, timed out, was skipped, or reported errors returns no
+        # findings, which must not be read as "everything got fixed".
         if self.cfg.persist:
+            completed_tools = {sr.tool for sr in scan_results if not sr.errors}
             try:
                 deltas = await reconcile_findings(
                     asset.tenant_id, asset.asset_id, enriched,
+                    completed_tools=completed_tools,
                 )
                 report.persisted_count = deltas["total"]
                 report.new_count = deltas["new"]
@@ -164,6 +172,18 @@ class Orchestrator:
         return report
 
     # ---------- internals ----------
+
+    async def _warm_epss(self, findings: list[Finding]) -> None:
+        warm = getattr(self.risk.epss, "warm", None)
+        if warm is None:
+            return
+        cves = {c for f in findings for c in f.cve}
+        if not cves:
+            return
+        try:
+            await warm(cves)
+        except Exception:  # noqa: BLE001
+            logger.exception("EPSS prefetch failed; scoring falls back to floor")
 
     async def _run_parallel(
         self, calls: list[CollectorCall],

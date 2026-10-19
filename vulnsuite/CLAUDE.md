@@ -30,7 +30,7 @@ docker compose -f deploy/docker-compose.yml up -d
 # Run components individually (after `pip install -e .`)
 uvicorn vulnsuite.api.main:app --reload --port 8000
 celery -A vulnsuite.workers.celery_app worker --loglevel=INFO \
-  --queues=vulnsuite.default,vulnsuite.scan,vulnsuite.discovery,vulnsuite.report
+  --queues=vulnsuite.default,vulnsuite.scan,vulnsuite.discovery,vulnsuite.report,vulnsuite.ai
 celery -A vulnsuite.workers.celery_app beat --loglevel=INFO
 streamlit run vulnsuite/dashboard/streamlit_app.py
 ```
@@ -61,6 +61,8 @@ Collectors are plug-ins satisfying `async scan(...) -> ScanResult`. They are con
 ### ScanTargets is the typed scan-request surface
 `core/schema.py::ScanTargets` is the single Pydantic model that defines what a scan can target. The API binds JSON request bodies to it; the worker re-validates server-side and `validate_dast_targets` enforces DAST allowlist + active-scan opt-in *both* in the API and in the Celery task (defense-in-depth — a bypassed API check still gets caught at worker time). When adding a target type: extend `ScanTargets`, the validator if relationship rules apply (e.g. `dast_mode` requires `api_base_urls`), and the relevant worker branch.
 
+Every `ScanTargets` string reaches a scanner command line or a target-list file, so each field has a format rule in `ScanTargets._FORMAT_RULES` backed by `core/targets.py` (no leading `-`, no control characters, plus hostname/URL/OCI/account-ID formats). A new field **must** be added to that map. Path-type fields are also listed in `targets.PATH_FIELDS` and confined under `VULNSUITE_SCAN_WORKSPACE_ROOT` by `workers/tasks.py::confine_target_paths` (symlinks resolved; unset root = warning, no confinement). Collectors pass the positional target after `--` where the binary's parser supports it (cobra/click/argparse/urfave tools); nmap and testssl rely on the format rules instead.
+
 ### Phase 2 collector wiring contract (workers/tasks.py)
 Several Phase 2 collectors emit findings with one tool's natural module that need re-tagging:
 - Trivy image scans driven by the K8s inventory pass are re-labelled to `Module.KUBERNETES` via `_rewrite_result_module(result, Module.KUBERNETES, {...cluster/namespace/kind/name})` so cluster + image findings group under the workload.
@@ -68,8 +70,26 @@ Several Phase 2 collectors emit findings with one tool's natural module that nee
 - SBOM-mode Trivy (`TrivyCollector().scan(path, "sbom", ...)`) is naturally `Module.SUPPLY_CHAIN` (handled inside Trivy's `_module_for_kind`).
 Preserve this pattern — the dashboard, PDF compliance snapshot, and CERT-In export all key off `module`, so a misclassified finding silently disappears from the right view.
 
+### Cloud accounts are bound per tenant (core/cloud_accounts.py)
+Cloud collectors never run on the worker's ambient identity for a tenant request. An admin binds `(provider, account_id)` to the tenant via `POST /api/v1/cloud-accounts` with a credential *reference* (AWS `role_arn` + `external_id`; GCP `credentials_file`; Azure `secret_env_prefix` resolving `<PREFIX>_AZURE_CLIENT_ID/_CLIENT_SECRET/_TENANT_ID` from the worker env). Rows live in `tenant_cloud_accounts` under RLS; the model rejects anything that looks like a secret. `authorize()` is checked in the API (403) and again in the worker (`workers/tasks.py::authorized_cloud_bindings`), and each bound account gets its own collector call under `scoped_env()`, which strips the provider's ambient variables before overlaying the tenant's. A request with no bound account fails closed — it never widens to "whatever the credential can see". Policy rejections (`PermissionError`/`ValueError`) are not retried by `scan_asset`.
+
+### Public targets need a tenant scope (core/scopes.py)
+Private address space is scannable by definition. A public IP/CIDR, or a hostname that resolves to one, is allowed only inside a scope an admin bound via `POST /api/v1/scopes` (`domain` = that domain and subdomains; `network` = CIDR). `classify_host()` resolves hostnames and refuses unresolvable ones — the old nmap check only looked at IP literals, so any hostname bypassed it. Checked in the API (403, `_require_scopes`) and in the worker (`host`, `tls_endpoint`, `root_domains`); ASM roots must be inside a domain scope and enumerated hosts are filtered with `under_roots()` before probing. `NmapPassiveCollector(allow_public=True)` now means "the worker already authorised this against scopes", and the collector still resolves and re-checks.
+
+### API audit trail (api/audit.py)
+`AuditMiddleware` writes one row to `audit_events` for every authenticated `/api/` call: actor (sub, email, roles), tenant, method, path, status, outcome (`success|denied|rejected|error`), client IP, request id (honours a well-formed incoming `X-Request-Id`, always echoed back), duration, and handler detail added with `audit_detail(request, ...)`. `get_principal` sets `request.state.principal` — new auth paths must keep doing that or their calls go unattributed. Rows are RLS-isolated and a trigger rejects UPDATE/DELETE (tamper-*resistant*, not tamper-proof, until the runtime DB role stops owning the table). A failed audit write logs at ERROR and does not fail the request. Query with `GET /api/v1/audit-events` (admin/auditor). `VULNSUITE_AUDIT_INCLUDE_READS=false` drops GET calls.
+
 ### Discovery → upsert pattern
 Every discovery collector returns `list[Asset]` with a stable identity tag (`azure_id`, `aws_arn`, `gcp_full_name`, `cluster`, `domain`, `artifact_digest`). `core/db.py::upsert_assets` keys on `(asset_type, external_id, name)` so re-running discovery is idempotent and won't multiply assets across runs. Discovery tasks (`discover_aws_assets`, `discover_gcp_assets`, `discover_domains`, `discover_kubernetes_clusters`, `discover_assets` for Azure) are individual Celery tasks routable to the `vulnsuite.discovery` queue.
+
+### Analyst triage (core/triage.py)
+`PATCH /api/v1/findings/{id}` moves a finding between `open | triaged | accepted | false_positive` (`fixed` belongs to the scanner). `accepted` and `false_positive` need a ≥10-char justification; `accepted` also needs a timezone-aware `accepted_until` no more than 365 days out. `reconcile_findings` never auto-closes or reopens analyst-owned statuses, except that an expired acceptance is reopened (and annotated) on the next scan. Triage columns on `findings` (`owner`, `triage_note`, `triaged_by`, `triaged_at`, `accepted_until`) are untouched by the re-scan update path — keep it that way. Existing databases need `deploy/postgres/migrations/0001_*.sql` (create_all never adds columns).
+
+### Two database roles (deploy/postgres/10-application-role.sh)
+`vulnsuite_migrator` owns the schema and is used only by `init_db` via `VULNSUITE_DB_MIGRATION_URL` (API container only). `vulnsuite_app` is the runtime role: DML grants from `db.grant_ddl()`, and on `audit_events` only `SELECT, INSERT`, so it cannot alter RLS policies, drop the immutability trigger, or rewrite audit rows. `validate_production` refuses to start without the migration URL; without it in dev, DDL runs as the runtime role with a warning. `init_db` takes an advisory lock so several uvicorn workers do not race through DDL.
+
+### Image supply chain (deploy/)
+Every binary download in the Dockerfile goes through `fetch-verified.sh` and must match the SHA-256 pinned for its exact URL in `checksums.sha256`. Bump an `ARG *_VERSION`, run `deploy/pin-checksums.sh` (prefers publishers' checksum files, otherwise hashes on download and marks the line `computed`), review the diff, rebuild. `tests/test_deploy_hardening.py` fails if a download has no pin, if anything pipes to a shell or uses `releases/latest`, or if the runtime `USER` goes missing. Python deps install from `requirements.lock` with `--require-hashes` when present (`deploy/lock-deps.sh`). CORS is explicit (`VULNSUITE_API_CORS_ORIGINS`, never `*`); Redis requires `REDIS_PASSWORD`.
 
 ### Multi-tenancy is enforced in Postgres, not Python
 `core/db.py` defines `AssetRow` and `FindingRow` with RLS policies keyed on `current_setting('app.tenant_id')::uuid`. Every DB interaction MUST go through `tenant_session(tenant_id)`, which runs `SET LOCAL app.tenant_id` before yielding the session. An app-code bug cannot leak across tenants because the DB kernel does the filtering. Preserve this: don't open raw sessions or bypass `tenant_session`.
@@ -89,7 +109,7 @@ Aggressive scan flags (nmap `T4`/`T5`, SYN scan, vuln scripts, OS fingerprinting
 DAST (ZAP active scan, nuclei) is the only intentionally-active surface and is *triple-gated*: (1) `ScanTargets.dast_mode` must be set to `baseline` or `active`; (2) every `api_base_urls` host must match `VULNSUITE_APISEC_DAST_ALLOWLIST` (suffix match on FQDN); (3) `dast_mode=active` additionally requires `VULNSUITE_APISEC_ALLOW_ACTIVE_SCAN=true`. The check runs both in `api/main.py::trigger_scan` and inside `workers/tasks.py::scan_asset` — never collapse this to a single check, defense-in-depth is the point.
 
 ### Services (deploy/docker-compose.yml)
-`postgres` (16, RLS) · `redis` (7, Celery broker + EPSS L2 cache) · `api` (FastAPI uvicorn) · `worker` (Celery, 4 queues: default/scan/discovery/report; mounts `reports:` and `offline-db:` volumes; 8GB RAM, 4 CPU) · `beat` (nightly Azure discovery per `celery_app.py::beat_schedule`) · `dashboard` (Streamlit). Task routing by queue is declared in `workers/celery_app.py`.
+`postgres` (16, RLS) · `redis` (7, Celery broker + EPSS L2 cache) · `api` (FastAPI uvicorn) · `worker` (Celery, 5 queues: default/scan/discovery/report/ai; mounts `reports:` and `offline-db:` volumes; 8GB RAM, 4 CPU) · `beat` (nightly `scheduled_discovery`, which fans out Azure discovery to the tenants in `VULNSUITE_SCAN_SCHEDULED_DISCOVERY_TENANTS`) · `dashboard` (Streamlit). Task routing by queue is declared in `workers/celery_app.py`; `tests/test_worker_wiring.py` fails if a routed queue is missing from the compose worker's `--queues`.
 
 ### Compliance layer
 `compliance/rbi_mapping.py` annotates findings with RBI CSF Annex-I clauses (6.2 crypto, 6.3 patching, 6.4 hardening, 6.5 certs, 6.13 cloud, 6.14 SDLC, 6.15 secrets, 6.16 DB). `compliance/certin_export.py` auto-emits a JSON incident report for every P0 finding. `reporting/pdf_report.py` uses Jinja2 + WeasyPrint and stamps every PDF with a SHA-256 content hash in the footer — keep that footer; it's the tamper-evidence contract.

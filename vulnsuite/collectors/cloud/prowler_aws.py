@@ -45,12 +45,14 @@ class ProwlerAWSCollector:
         tenant_id: UUID,
         asset_id: UUID,
         account_ids: list[str] | None = None,
+        role_arn: str | None = None,
+        external_id: str | None = None,
     ) -> ScanResult:
         started = datetime.now(timezone.utc)
         findings: list[Finding] = []
         errors: list[str] = []
         try:
-            raw = await self._run(account_ids or [])
+            raw = await self._run(account_ids or [], role_arn, external_id)
             findings = self._normalize(raw, tenant_id, asset_id)
         except asyncio.TimeoutError:
             errors.append(f"prowler aws timeout after {self.timeout}s")
@@ -67,7 +69,12 @@ class ProwlerAWSCollector:
             errors=errors,
         )
 
-    async def _run(self, account_ids: list[str]) -> list[dict]:
+    async def _run(
+        self,
+        account_ids: list[str],
+        role_arn: str | None = None,
+        external_id: str | None = None,
+    ) -> list[dict]:
         outdir = tempfile.mkdtemp(prefix="prowler-aws-")
         cmd = [
             self.binary,
@@ -82,6 +89,12 @@ class ProwlerAWSCollector:
         if account_ids:
             # Without this flag the current credential's whole organization is scanned.
             cmd += ["--aws-account-id", *account_ids]
+        if role_arn:
+            # Per-tenant role: the worker's base identity only assumes the
+            # tenant's audit role; it never scans with its own permissions.
+            cmd += ["--role", role_arn]
+            if external_id:
+                cmd += ["--external-id", external_id]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,

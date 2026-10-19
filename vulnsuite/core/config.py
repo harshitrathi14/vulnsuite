@@ -8,10 +8,11 @@ container, never baked into images.
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,10 @@ class DatabaseSettings(BaseSettings):
     pool_size: int = 10
     max_overflow: int = 20
     echo: bool = False
+    # Schema-owner connection used only by init_db (DDL, RLS, grants).
+    # Required in production so the runtime role never owns the tables.
+    migration_url: str | None = None
+    app_role: str = "vulnsuite_app"      # runtime role that receives DML grants
 
 
 class RedisSettings(BaseSettings):
@@ -83,6 +88,13 @@ class ScanningSettings(BaseSettings):
     per_collector_timeout: int = 1800
     offline_mode: bool = False         # air-gapped BFSI deployments
     external_module_downloads: bool = False
+    # Directory every path-type scan target (repo, iac_paths, sbom_paths,
+    # kubeconfig_path, ...) must resolve under. Unset = paths are only
+    # format-checked, and the worker logs a warning at each scan.
+    workspace_root: Path | None = None
+    # Tenants the nightly beat job runs Azure discovery for (JSON list of
+    # tenant UUIDs in the env var). Each still needs an Azure binding.
+    scheduled_discovery_tenants: list[str] = Field(default_factory=list)
     offline_epss_csv: Path | None = None
     offline_kev_json: Path | None = None     # CISA KEV mirror for air-gapped escalation
     offline_trivy_db: Path | None = None
@@ -227,9 +239,8 @@ class AuthSettings(BaseSettings):
     roles_claim: str = "roles"
     clock_skew_seconds: int = Field(default=30, ge=0, le=120)
     max_token_lifetime_seconds: int = Field(default=28800, ge=60, le=86400)
-    # Retained for configuration compatibility; bearer verification never uses it.
-    session_secret: SecretStr = SecretStr("change-me-in-production")
-    session_ttl_seconds: int = 28800      # 8h work day
+    # The former session_secret / session_ttl_seconds were never read by
+    # any code path; a default "change-me" secret is a liability, so gone.
 
 
 class ComplianceSettings(BaseSettings):
@@ -246,6 +257,32 @@ class ReportingSettings(BaseSettings):
     output_dir: Path = Path("/var/lib/vulnsuite/reports")
     classification_banner: str = "CONFIDENTIAL — INTERNAL USE ONLY"
     signing_key_path: Path | None = None     # optional PDF signing
+
+
+class ApiSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="VULNSUITE_API_")
+    # Browser origins allowed to call the API with credentials, e.g.
+    # ["https://console.example.com"]. Empty = no CORS headers at all
+    # (same-origin only). "*" is refused: with credentials it is both
+    # rejected by browsers and a CSRF foot-gun, and it was the old default.
+    cors_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("cors_origins")
+    @classmethod
+    def _origins(cls, values: list[str]) -> list[str]:
+        out: list[str] = []
+        for v in values:
+            v = v.strip().rstrip("/")
+            if v == "*" or not re.match(r"^https?://[A-Za-z0-9.-]+(?::[0-9]{1,5})?$", v):
+                raise ValueError(f"cors_origins entry {v!r} must be an explicit http(s)://host[:port] origin")
+            out.append(v)
+        return out
+
+
+class AuditSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="VULNSUITE_AUDIT_")
+    enabled: bool = True
+    include_reads: bool = True     # also record GET calls (who viewed what)
 
 
 class Settings(BaseSettings):
@@ -278,6 +315,8 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     compliance: ComplianceSettings = Field(default_factory=ComplianceSettings)
     reporting: ReportingSettings = Field(default_factory=ReportingSettings)
+    audit: AuditSettings = Field(default_factory=AuditSettings)
+    api: ApiSettings = Field(default_factory=ApiSettings)
 
     @property
     def is_production(self) -> bool:
@@ -295,6 +334,13 @@ class Settings(BaseSettings):
                 issues.append("database.echo must be False in production")
             if self.database.url.startswith("postgresql+asyncpg://vulnsuite:vulnsuite@"):
                 issues.append("default DB credentials detected in production")
+            if not self.database.migration_url:
+                issues.append(
+                    "database.migration_url required in production "
+                    "(the runtime role must not own the schema)"
+                )
+            if self.database.migration_url and self.database.migration_url == self.database.url:
+                issues.append("database.migration_url must use a different role than database.url")
         return issues
 
 

@@ -29,10 +29,17 @@ class GCPInventoryCollector:
             raise GCloudNotInstalled(f"{binary!r} not found on PATH")
         self.binary = binary
 
-    async def discover(self, tenant_id: UUID, project_ids: list[str]) -> list[Asset]:
+    async def discover(
+        self,
+        tenant_id: UUID,
+        project_ids: list[str],
+        env: dict[str, str] | None = None,
+    ) -> list[Asset]:
+        """`env` is the tenant-scoped gcloud environment (service-account
+        file + project) from core.cloud_accounts; None inherits the worker env."""
         assets: list[Asset] = []
         for project_id in project_ids:
-            rows = await self._run_search(project_id)
+            rows = await self._run_search(project_id, env)
             for row in rows:
                 asset_type = str(row.get("assetType") or "")
                 name = str(row.get("displayName") or row.get("name") or "gcp-resource")
@@ -54,7 +61,9 @@ class GCPInventoryCollector:
                 )
         return assets
 
-    async def _run_search(self, project_id: str) -> list[dict]:
+    async def _run_search(
+        self, project_id: str, env: dict[str, str] | None = None,
+    ) -> list[dict]:
         proc = await asyncio.create_subprocess_exec(
             self.binary,
             "asset",
@@ -62,6 +71,7 @@ class GCPInventoryCollector:
             "--scope",
             f"projects/{project_id}",
             "--format=json",
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

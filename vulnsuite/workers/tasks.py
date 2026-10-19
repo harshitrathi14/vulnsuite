@@ -55,9 +55,52 @@ from ..core.schema import (
     ScanResult,
     ScanTargets,
 )
+from ..core.cloud_accounts import (
+    CloudProvider,
+    authorize,
+    azure_env,
+    gcp_env,
+    load_cloud_bindings,
+    scoped_env,
+)
+from ..core.scopes import (
+    authorize_root_domains,
+    classify_host,
+    load_scopes,
+    split_host_port,
+    under_roots,
+)
+from ..core.targets import confine_paths
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+async def authorized_cloud_bindings(
+    tenant_id: UUID, provider: CloudProvider, requested: list[str] | None,
+):
+    """A cloud scan or discovery runs under the tenant's own binding or not
+    at all. The API performs the same check for a fast 403; this is the
+    worker-side half of the defense-in-depth pair (same as the DAST gate).
+    Raises CloudAccessError."""
+    return authorize(await load_cloud_bindings(tenant_id, provider), provider, requested)
+
+
+def confine_target_paths(targets: ScanTargets) -> ScanTargets:
+    """Pin every path-type target under VULNSUITE_SCAN_WORKSPACE_ROOT.
+
+    Without a root, an analyst token could point `repo`/`sbom_paths`/
+    `kubeconfig_path` at any file on the worker — including another
+    tenant's checkout — so we warn loudly when the guard is off.
+    """
+    root = settings.scanning.workspace_root
+    if root is None:
+        logger.warning(
+            "VULNSUITE_SCAN_WORKSPACE_ROOT is unset; scan paths are not "
+            "confined to a workspace"
+        )
+        return targets
+    return confine_paths(targets, Path(root))
 
 
 def _run_async(coro):
@@ -169,6 +212,7 @@ def scan_asset(
     async def _run() -> dict:
         target_model = ScanTargets.model_validate(targets)
         validate_dast_targets(target_model)
+        target_model = confine_target_paths(target_model)
 
         asset = Asset(
             asset_id=UUID(asset_id),
@@ -212,6 +256,17 @@ def scan_asset(
         post_processors = []
         tid, aid = asset.tenant_id, asset.asset_id
         temp_sboms: list[Path] = []
+        # "Own assets only": public network targets must sit inside a scope
+        # bound to the tenant (core/scopes.py). Private space needs none.
+        # Loaded lazily so a scan with no network targets (or offline
+        # mode, which skips ASM) never touches the scopes table.
+        scopes_cache: list | None = None
+
+        async def tenant_scopes() -> list:
+            nonlocal scopes_cache
+            if scopes_cache is None:
+                scopes_cache = await load_scopes(tid)
+            return scopes_cache
 
         try:
             if repo := target_model.repo:
@@ -230,23 +285,43 @@ def scan_asset(
                     lambda i=image: DockleCollector().scan(i, tid, aid),
                 ]
             if host := target_model.host:
-                calls.append(lambda h=host: NmapPassiveCollector().scan(h, tid, aid))
+                public = await classify_host(host, await tenant_scopes()) == "scoped"
+                calls.append(
+                    lambda h=host, p=public: NmapPassiveCollector(allow_public=p).scan(h, tid, aid)
+                )
             if tls := target_model.tls_endpoint:
+                await classify_host(split_host_port(tls), await tenant_scopes())
                 calls.append(lambda t=tls: TestSSLCollector().scan(t, tid, aid))
+            # Cloud: one collector call per bound account, each under that
+            # account's own credential. Unbound accounts abort the scan.
             if target_model.azure:
-                calls.append(lambda: ProwlerAzureCollector().scan(tid, aid))
+                for b in await authorized_cloud_bindings(tid, CloudProvider.AZURE, None):
+                    env = scoped_env(CloudProvider.AZURE, azure_env(b))
+                    calls.append(
+                        lambda sub=b.account_id, e=env: ProwlerAzureCollector().scan(
+                            tid, aid, subscription_ids=[sub], env=e
+                        )
+                    )
             if target_model.aws_accounts:
-                calls.append(
-                    lambda ids=list(target_model.aws_accounts): ProwlerAWSCollector().scan(
-                        tid, aid, account_ids=ids
+                for b in await authorized_cloud_bindings(
+                    tid, CloudProvider.AWS, list(target_model.aws_accounts)
+                ):
+                    calls.append(
+                        lambda b=b: ProwlerAWSCollector().scan(
+                            tid, aid, account_ids=[b.account_id],
+                            role_arn=b.role_arn, external_id=b.external_id,
+                        )
                     )
-                )
             if target_model.gcp_projects:
-                calls.append(
-                    lambda ids=list(target_model.gcp_projects): ProwlerGCPCollector().scan(
-                        tid, aid, project_ids=ids
+                for b in await authorized_cloud_bindings(
+                    tid, CloudProvider.GCP, list(target_model.gcp_projects)
+                ):
+                    calls.append(
+                        lambda b=b: ProwlerGCPCollector().scan(
+                            tid, aid, project_ids=[b.account_id],
+                            credentials_file=b.credentials_file,
+                        )
                     )
-                )
 
             iac_paths = list(
                 dict.fromkeys(
@@ -306,10 +381,14 @@ def scan_asset(
                     calls.append(_skip_call("subfinder", Module.ASM, aid, "offline mode disables ASM passive discovery"))
                     calls.append(_skip_call("httpx", Module.ASM, aid, "offline mode disables ASM service enrichment"))
                 else:
+                    roots = authorize_root_domains(target_model.root_domains, await tenant_scopes())
                     hosts = await SubfinderCollector(
                         binary=settings.tools.subfinder_binary,
                         max_results_per_root=settings.asm.max_subdomains_per_root,
-                    ).enumerate(target_model.root_domains)
+                    ).enumerate(roots)
+                    # subfinder can surface CNAME targets outside the root;
+                    # only hosts under an authorised root get probed.
+                    hosts = under_roots(hosts, roots)
                     if hosts:
                         calls.append(lambda hosts=hosts: HttpxCollector(binary=settings.tools.httpx_binary).scan(hosts, tid, aid))
                         for host in hosts:
@@ -402,6 +481,11 @@ def scan_asset(
 
     try:
         return _run_async(_run())
+    except (PermissionError, ValueError):
+        # Policy rejection (unbound cloud account, DAST allowlist, bad
+        # target): retrying cannot help and would re-run every collector.
+        logger.exception("scan_asset rejected by policy")
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.exception("scan_asset failed")
         raise self.retry(exc=exc, countdown=60)
@@ -525,10 +609,24 @@ def ai_enrich_findings(
 @shared_task(name="vulnsuite.workers.tasks.discover_assets")
 def discover_assets(tenant_id: str) -> int:
     async def _run() -> int:
+        from azure.identity.aio import ClientSecretCredential
+
         from ..collectors.discovery.azure_inventory import AzureInventoryCollector
 
-        assets = await AzureInventoryCollector().discover(UUID(tenant_id))
-        return await upsert_assets(UUID(tenant_id), assets)
+        tid = UUID(tenant_id)
+        total = 0
+        for b in await authorized_cloud_bindings(tid, CloudProvider.AZURE, None):
+            sp = azure_env(b)
+            credential = ClientSecretCredential(
+                tenant_id=sp["AZURE_TENANT_ID"],
+                client_id=sp["AZURE_CLIENT_ID"],
+                client_secret=sp["AZURE_CLIENT_SECRET"],
+            )
+            assets = await AzureInventoryCollector().discover(
+                tid, subscription_ids=[b.account_id], credential=credential,
+            )
+            total += await upsert_assets(tid, assets)
+        return total
 
     return _run_async(_run())
 
@@ -543,10 +641,17 @@ def discover_aws_assets(tenant_id: str, account_ids: list[str]) -> int:
     async def _run() -> int:
         if settings.scanning.offline_mode:
             return 0
-        assets = await AWSInventoryCollector(binary=settings.tools.aws_binary, region=settings.aws.region).discover(
-            UUID(tenant_id), account_ids
-        )
-        return await upsert_assets(UUID(tenant_id), assets)
+        tid = UUID(tenant_id)
+        total = 0
+        for b in await authorized_cloud_bindings(tid, CloudProvider.AWS, account_ids):
+            assets = await AWSInventoryCollector(
+                binary=settings.tools.aws_binary,
+                region=settings.aws.region,
+                role_arn=b.role_arn,
+                external_id=b.external_id,
+            ).discover(tid, [b.account_id])
+            total += await upsert_assets(tid, assets)
+        return total
 
     return _run_async(_run())
 
@@ -556,10 +661,14 @@ def discover_gcp_assets(tenant_id: str, project_ids: list[str]) -> int:
     async def _run() -> int:
         if settings.scanning.offline_mode:
             return 0
-        assets = await GCPInventoryCollector(binary=settings.tools.gcloud_binary).discover(
-            UUID(tenant_id), project_ids
-        )
-        return await upsert_assets(UUID(tenant_id), assets)
+        tid = UUID(tenant_id)
+        total = 0
+        for b in await authorized_cloud_bindings(tid, CloudProvider.GCP, project_ids):
+            assets = await GCPInventoryCollector(binary=settings.tools.gcloud_binary).discover(
+                tid, [b.account_id], env=scoped_env(CloudProvider.GCP, gcp_env(b)),
+            )
+            total += await upsert_assets(tid, assets)
+        return total
 
     return _run_async(_run())
 
@@ -569,11 +678,13 @@ def discover_domains(tenant_id: str, root_domains: list[str]) -> int:
     async def _run() -> int:
         if settings.scanning.offline_mode:
             return 0
+        tid = UUID(tenant_id)
+        roots = authorize_root_domains(root_domains, await load_scopes(tid))
         assets = await SubfinderCollector(
             binary=settings.tools.subfinder_binary,
             max_results_per_root=settings.asm.max_subdomains_per_root,
-        ).discover(UUID(tenant_id), root_domains)
-        return await upsert_assets(UUID(tenant_id), assets)
+        ).discover(tid, roots)
+        return await upsert_assets(tid, assets)
 
     return _run_async(_run())
 
@@ -589,6 +700,34 @@ def discover_kubernetes_clusters(tenant_id: str, kubeconfig_path: str | None = N
         return await upsert_assets(UUID(tenant_id), assets)
 
     return _run_async(_run())
+
+
+@shared_task(name="vulnsuite.workers.tasks.scheduled_discovery")
+def scheduled_discovery() -> dict:
+    """Beat entry point: fan out per-tenant Azure discovery.
+
+    Celery beat cannot know tenants, and `discover_assets` requires one
+    (the old schedule called it with none and failed every night), so the
+    tenant list lives in VULNSUITE_SCAN_SCHEDULED_DISCOVERY_TENANTS. Each
+    queued job still passes through the tenant's cloud bindings.
+    """
+    queued: list[str] = []
+    skipped: list[str] = []
+    for raw in settings.scanning.scheduled_discovery_tenants:
+        try:
+            tenant_id = str(UUID(str(raw).strip()))
+        except ValueError:
+            logger.error("scheduled discovery: %r is not a tenant UUID; skipped", raw)
+            skipped.append(str(raw))
+            continue
+        discover_assets.delay(tenant_id=tenant_id)
+        queued.append(tenant_id)
+    if not queued:
+        logger.warning(
+            "scheduled discovery ran with no tenants configured; set "
+            "VULNSUITE_SCAN_SCHEDULED_DISCOVERY_TENANTS to a JSON list of tenant UUIDs"
+        )
+    return {"queued": queued, "skipped": skipped}
 
 
 @shared_task(name="vulnsuite.workers.tasks.generate_report")

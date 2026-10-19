@@ -52,9 +52,40 @@ async def test_init_db_applies_write_checks_and_forces_owner_isolation(monkeypat
     sql = [str(call.args[0]) for call in conn.execute.call_args_list]
     assert "ALTER TABLE assets   FORCE ROW LEVEL SECURITY;" in sql
     assert "ALTER TABLE findings FORCE ROW LEVEL SECURITY;" in sql
+    assert "ALTER TABLE tenant_cloud_accounts FORCE ROW LEVEL SECURITY;" in sql
+    assert "ALTER TABLE tenant_scopes FORCE ROW LEVEL SECURITY;" in sql
+    assert "ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;" in sql
     policies = [stmt for stmt in sql if stmt.startswith("CREATE POLICY")]
-    assert len(policies) == 2
+    assert len(policies) == 5
     assert all("WITH CHECK" in statement and "NULLIF" in statement for statement in policies)
+    triggers = [stmt for stmt in sql if stmt.startswith("CREATE TRIGGER audit_events_no_rewrite")]
+    assert len(triggers) == 1 and "BEFORE UPDATE OR DELETE ON audit_events" in triggers[0]
+    assert any("pg_advisory_xact_lock" in s for s in sql), "init_db must serialise across API workers"
+    # Without a migration role there is nobody to grant to (dev fallback).
+    assert not any(s.startswith("GRANT") for s in sql)
+
+
+@pytest.mark.asyncio
+async def test_init_db_as_migrator_grants_runtime_role_dml_only(monkeypatch):
+    conn = fake_engine(monkeypatch)
+    migrator = MagicMock()
+    migrator.begin.return_value.__aenter__.return_value = conn
+    monkeypatch.setattr(db, "get_migration_engine", lambda: migrator)
+    runtime = MagicMock()
+    monkeypatch.setattr(db, "get_engine", lambda: runtime)
+    await db.init_db()
+    runtime.begin.assert_not_called()                     # DDL never runs as the runtime role
+    sql = [str(call.args[0]) for call in conn.execute.call_args_list]
+    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON assets, findings, tenant_cloud_accounts, tenant_scopes TO vulnsuite_app;" in sql
+    assert "GRANT SELECT, INSERT ON audit_events TO vulnsuite_app;" in sql
+    assert "REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM vulnsuite_app;" in sql
+    assert not any("audit_events" in s and s.startswith("GRANT") and "DELETE" in s for s in sql)
+
+
+@pytest.mark.parametrize("bad", ["app;DROP ROLE x", "Vulnsuite", "", "a" * 64, "role name"])
+def test_grant_ddl_rejects_unsafe_role_names(bad):
+    with pytest.raises(ValueError):
+        db.grant_ddl(bad)
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from jose import jwk, jwt
 from jose.exceptions import JOSEError
 from pydantic import BaseModel, ConfigDict
@@ -202,7 +202,7 @@ def get_verifier() -> JWTVerifier:
     return JWTVerifier(get_settings().auth)
 
 
-async def get_principal(
+async def _authenticate(
     authorization: Annotated[str | None, Header()] = None,
     x_tenant_id: Annotated[str | None, Header()] = None,
 ) -> Principal:
@@ -220,6 +220,15 @@ async def get_principal(
         raise HTTPException(503, "identity provider is not configured") from None
     except AuthenticationError:
         raise HTTPException(401, "invalid access token", headers={"WWW-Authenticate": "Bearer"}) from None
+
+
+async def get_principal(
+    request: Request, p: Principal = Depends(_authenticate),
+) -> Principal:
+    """Authenticated principal, also exposed on `request.state.principal`
+    so the audit middleware can attribute the call (api/audit.py)."""
+    request.state.principal = p
+    return p
 
 
 def require_role(*allowed: str):

@@ -101,7 +101,7 @@ class TrivyCollector:
         ]
         if self.offline:
             cmd += ["--offline-scan", "--skip-db-update"]
-        cmd.append(target)
+        cmd += ["--", target]   # end of options: target can never be parsed as a flag
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
