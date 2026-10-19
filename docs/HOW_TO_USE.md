@@ -22,7 +22,8 @@ The zip contains the complete, current source tree. Nothing needs to be download
 | `vulnsuite/deploy/AUTH_DEPLOYMENT.md` | Identity, database roles and existing-database migration guide |
 | `vulnsuite/protection/README.md`, `OPERATIONS.md`, `deploy/protection/` | Server intrusion monitoring and response module (separate service) |
 | `docs/HOW_TO_USE.md` | This document |
-| `VulnSuite_Executive_Deck_FINAL.pptx`, `VulnSuite_Executive_Deck_Review.pdf`, `vulnsuite/ciso_email.txt` | Briefing collateral |
+
+The executive briefing deck is shared separately as an attachment and is not part of this zip.
 
 Integrity: a `.sha256` file is supplied next to the zip. Verify before use:
 
