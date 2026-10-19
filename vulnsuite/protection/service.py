@@ -62,6 +62,7 @@ def create_app(config: dict | None = None, store: Store | None = None) -> FastAP
     dbstore = store or Store(cfg["database"], host_addresses, int(cfg.get("retention_days", 7)))
     dbstore.seed_hosts(hosts)
     dbstore.connector_names = list(cfg.get("integrations", {}))
+    dbstore.response_policies = dict(cfg.get("response", {}).get("hosts", {}))
     dbstore.host_addresses = {address: name for name, policy in dbstore.host_policies().items()
                              for address in policy.get("addresses", [])}
     app = FastAPI(title="VulnSuite Server Protection", version="0.4.0",

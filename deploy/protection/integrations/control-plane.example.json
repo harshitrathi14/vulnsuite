@@ -40,6 +40,11 @@
           "grace_seconds": 2,
           "allow_privileged": false,
           "protected_executables": ["/usr/sbin/nginx", "/usr/sbin/php-fpm8.2"]
+        },
+        "automatic": {
+          "rules": [],
+          "approved_by": "",
+          "isolate_seconds": 900
         }
       }
     }

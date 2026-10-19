@@ -64,7 +64,7 @@ def _validate(config, plan, *, live=True):
         raise ValueError("invalid plan timestamps")
     expected = prepare_windows_isolation(config, plan["expires_at"] - plan["created_at"],
                                          plan["request_id"], plan["created_at"])
-    if expected != {key: value for key, value in plan.items() if key != "reason"}:
+    if expected != {key: value for key, value in plan.items() if key not in ("reason", "automatic")}:
         raise ValueError("Windows isolation differs from local policy")
     instant = time.time()
     if live and (plan["expires_at"] <= instant or plan["created_at"] > instant + 30):

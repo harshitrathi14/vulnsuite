@@ -42,6 +42,9 @@ def execute_playbook(config: dict, command: dict) -> dict:
             raise ValueError("dispatch deadline expired or invalid")
         if action in ("quarantine_file", "isolate_host", "terminate_process") and UUID(plan["request_id"]) != UUID(command["id"]):
             raise ValueError("job identifier mismatch")
+        # A plan approved by policy rather than a person needs the host's own opt-in.
+        if plan.get("automatic") and policy.get("allow_automatic") is not True:
+            raise ValueError("automatic response not permitted by local policy")
         if platform == 'windows':
             from .windows_quarantine import WindowsQuarantine
             from .windows_isolation import apply_windows_isolation, release_windows_isolation

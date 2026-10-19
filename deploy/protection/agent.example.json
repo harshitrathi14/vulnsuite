@@ -33,5 +33,12 @@
     "interval_seconds": 300,
     "scan_files": [],
     "known_bad_sha256": {}
+  },
+  "ransomware": {
+    "enabled": false,
+    "canary_files": ["/srv/share/finance/Q3-board-pack.xlsx"],
+    "watch_dirs": ["/srv/share/finance", "/srv/share/hr"],
+    "change_threshold": 50,
+    "entropy_check": true
   }
 }

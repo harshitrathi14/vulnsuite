@@ -14,7 +14,12 @@ class Event(BaseModel):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     kind: Literal["auth_failure", "auth_success", "file_change", "api_denied", "heartbeat",
                   "process_alert", "malware_detection", "waf_match", "sensor_status", "process_start",
-                  "log_tamper"]
+                  "log_tamper", "ransomware_signal"]
+    # Ransomware early warning (protection/ransomware.py); counts are metadata only.
+    signal: Literal["canary_modified", "canary_deleted", "mass_change", "high_entropy_rewrite"] | None = None
+    change_count: int | None = Field(default=None, ge=0, le=10**9)
+    entropy_samples: int | None = Field(default=None, ge=0, le=64)
+    sample_extensions: list[str] = Field(default_factory=list, max_length=8)
     # Per-agent monotonic counter assigned when the event enters the durable outbox;
     # the service alerts on gaps (lost or removed events) and on resets (replaced state).
     sequence: int | None = Field(default=None, ge=1, le=2**53)
@@ -49,7 +54,8 @@ class Event(BaseModel):
     signature: str | None = Field(default=None, min_length=1, max_length=128)
     rule_ids: list[StrictInt] = Field(default_factory=list, max_length=32)
     waf_action: Literal["detected", "interrupted", "unknown"] | None = None
-    sensor: Literal["process", "malware", "waf", "logs", "files", "telemetry", "delivery", "response"] | None = None
+    sensor: Literal["process", "malware", "waf", "logs", "files", "telemetry", "delivery", "response",
+                    "ransomware"] | None = None
     sensor_status: Literal["ok", "partial", "error"] | None = None
     sensor_detail: Literal["collected", "access_denied", "scanner_error", "scan_limit", "input_error", "backpressure", "delivery_error", "ack_error", "execution_error"] | None = None
 
@@ -79,6 +85,11 @@ class Event(BaseModel):
             raise ValueError("sensor status required")
         if self.kind == "log_tamper" and not self.tamper:
             raise ValueError("tamper evidence required")
+        if self.kind == "ransomware_signal" and (not self.signal or not self.path):
+            raise ValueError("ransomware signal and path required")
+        if any(not isinstance(e, str) or not 1 <= len(e) <= 32 or any(ord(c) < 33 for c in e)
+               for e in self.sample_extensions):
+            raise ValueError("invalid extension sample")
         return self
 
     @field_validator("source_ip")

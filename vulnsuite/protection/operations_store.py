@@ -50,6 +50,57 @@ class OperationsMixin:
                     if column not in present:
                         db.execute(f'ALTER TABLE {table} ADD COLUMN {column} REAL NOT NULL DEFAULT 0')
         self.connector_names = []
+        # Per-host pre-approved containment policy (service config `response.hosts`).
+        self.response_policies = {}
+
+    AUTO_RULES = ('ransomware_activity',)
+
+    def automatic_response(self, db, alert, now):
+        """Pre-approved host isolation for the configured critical rules.
+
+        Opt-in twice: the service policy names the rules, duration and the
+        administrator who pre-approved it, and the host's local response policy
+        must allow automatic plans. The job is created already approved, marked
+        automatic, audited, and expires like any other isolation; the agent still
+        applies its own policy and reports a receipt.
+        """
+        policy = self.response_policies.get(alert['host'], {})
+        auto = policy.get('automatic') if isinstance(policy, dict) else None
+        if (not auto or not isinstance(auto, dict) or alert['rule'] not in auto.get('rules', [])
+                or alert['rule'] not in self.AUTO_RULES or not policy.get('enabled')
+                or 'isolate_host' not in policy.get('allowed_actions', [])):
+            return None
+        approver = auto.get('approved_by')
+        duration = auto.get('isolate_seconds', 900)
+        if not isinstance(approver, str) or not approver or type(duration) is not int or not 60 <= duration <= 3600:
+            return None
+        # One automatic isolation per host at a time; never stack timers.
+        outstanding = db.execute("SELECT 1 FROM response_jobs WHERE host=? AND action='isolate_host' "
+                                 "AND status IN ('requested','approved','applied') AND expires>?",
+                                 (alert['host'], now)).fetchone()
+        if outstanding:
+            return None
+        identifier = uuid4().hex
+        try:
+            if policy.get('platform', 'linux') == 'windows':
+                from .windows_isolation import prepare_windows_isolation as prepare
+            else:
+                from .playbooks import prepare_isolation as prepare
+            plan = prepare(policy.get('isolation', {}), duration, identifier, now=now)
+        except (ValueError, TypeError, KeyError):
+            self.audit(db, 'automatic_response_invalid', alert['host'],
+                       json.dumps({'alert_id': alert['id'], 'rule': alert['rule']}))
+            return None
+        plan.update({'platform': policy.get('platform', 'linux'), 'automatic': True,
+                     'reason': f"Automatic isolation pre-approved for {alert['rule']} (alert {alert['id']})"})
+        db.execute('INSERT INTO response_jobs(id,host,action,alert_id,plan,status,requested_by,approved_by,created,expires) '
+                   "VALUES(?,?,'isolate_host',?,?,'approved','policy:automatic',?,?,?)",
+                   (identifier, alert['host'], alert['id'], json.dumps(plan), approver, now, plan['expires_at']))
+        self.audit(db, 'playbook_auto_approved', approver,
+                   json.dumps({'id': identifier, 'alert_id': alert['id'], 'rule': alert['rule'], 'plan': plan}))
+        self.queue_notifications(db, 'response.automatic', {'id': identifier, 'host': alert['host'],
+                                                            'rule': alert['rule'], 'expires_at': plan['expires_at']})
+        return identifier
 
     @staticmethod
     def token_hash(token):

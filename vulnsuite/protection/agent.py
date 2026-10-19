@@ -275,6 +275,14 @@ def collect(config: dict, state: dict) -> None:
             previous = state.get("sensor_states", {}).get("malware", {})
             status, detail = previous.get("status", "partial"), previous.get("detail", "input_error")
         sensor_event(state, outbox, "malware", status, detail)
+    if config.get("ransomware", {}).get("enabled") and len(outbox) < limit - 20:
+        from .ransomware import ransomware_events
+        try:
+            items, status, detail = ransomware_events(config["ransomware"], state)
+            outbox.extend(event(item) for item in items)
+        except (OSError, ValueError):
+            status, detail = "error", "input_error"
+        sensor_event(state, outbox, "ransomware", status, detail)
     state["collection_paused"] = len(outbox) >= limit
     # Coalesce unsent heartbeats; state still retains every evidence event through outages.
     outbox[:] = [item for item in outbox if item["kind"] != "heartbeat"]
@@ -391,6 +399,9 @@ def main():
     from .sensors import indicators
     indicators(config.get("process_monitor", {}))
     indicators(config.get("malware", {}))
+    if config.get("ransomware", {}).get("enabled"):
+        from .ransomware import validate_config
+        validate_config(config["ransomware"])
     queue_capacity(config)
     # Only one agent can own the offsets/outbox or execute responses on this host.
     path = Path(config["state_path"])

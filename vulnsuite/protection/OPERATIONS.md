@@ -140,6 +140,38 @@ It covers backups, recovery, retention, missing-telemetry alerts, synthetic dete
 evaluation and staged agent upgrades. This service still uses a per-organisation
 SQLite operational database; it is not a horizontally scalable PostgreSQL backend.
 
+## Ransomware early warning and pre-approved isolation
+
+The `ransomware` sensor (Linux and Windows, read-only, polling) raises a
+critical `ransomware_activity` alert from three independent signals:
+
+- Canary files. The operator places decoy documents nothing legitimate touches
+  (`canary_files`); the agent baselines size, mtime and a content hash and
+  reports `canary_modified` or `canary_deleted`.
+- Mass change. For each `watch_dirs` entry (one level, up to 5,000 files) the
+  agent compares listings between polls and reports `mass_change` when renames,
+  rewrites and deletions since the previous poll reach `change_threshold`
+  (default 50), with the most common new extensions.
+- High-entropy rewrites. A bounded sample of files changed since the previous
+  poll is read (first 64 KiB); `high_entropy_rewrite` fires when most samples
+  look random, the signature of encryption rather than editing.
+
+Detection happens at the next poll, after encryption has started; the value is
+fast containment and investigation evidence, not prevention. Bulk legitimate
+operations (migrations, archive extraction, compression jobs) can trigger the
+mass-change signal; tune the threshold and watch directories on staging.
+
+Isolation stays behind a separate approver by default. A pre-approved
+automatic isolation can be enabled for this rule only, and only when both sides
+opt in: the service host policy carries `automatic: {rules:
+["ransomware_activity"], approved_by: "<administrator>", isolate_seconds: 900}`
+and the host's local `response_policy` sets `allow_automatic: true`. The job is
+created already approved, attributed to the named administrator, marked
+`automatic` in the plan, audited as `playbook_auto_approved`, sent to
+integrations as `response.automatic`, and expires like any other isolation.
+One automatic isolation per host is outstanding at a time. Release remains a
+separately approved `release_host`.
+
 ## Log tamper detection and telemetry integrity
 
 Attackers clear or edit logs to hide entry and movement. Three independent

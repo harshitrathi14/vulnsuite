@@ -133,6 +133,11 @@ class Store(OperationsMixin):
                 if not archived:
                     self.update_host_metadata(db, host, event, now)
                 rules = list(integrity)
+                if kind == "ransomware_signal":
+                    rules.append(("ransomware_activity", "critical", json.dumps({
+                        "signal": event.signal, "path": event.path, "change_count": event.change_count,
+                        "sample_extensions": list(event.sample_extensions),
+                        "entropy_samples": event.entropy_samples})))
                 if kind == "log_tamper":
                     severe = event.tamper in ("cleared", "deleted", "truncated", "audit_stopped")
                     rules.append(("log_tampering", "critical" if severe else "high", json.dumps({
@@ -220,6 +225,7 @@ class Store(OperationsMixin):
                         alerts.append(alert)
                         self.record_operational_alert(db, alert, now)
                         self.audit(db, "alert_created", alert_host, str(cursor.lastrowid))
+                        self.automatic_response(db, alert, now)
             # Persist the chain head; anchor it outside this database on a schedule so
             # later tampering with the events table is detectable (telemetry.checkpoint).
             checkpoint = chain["count"] and now - chain["checkpoint_at"] >= self.CHECKPOINT_SECONDS

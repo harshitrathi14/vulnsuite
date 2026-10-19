@@ -301,7 +301,7 @@ def isolation_script(config: dict, plan: dict, now=None) -> str:
     """Render fixed nft syntax; a kernel timeout removes the drop predicate."""
     expected = prepare_isolation(config, plan["expires_at"] - plan["created_at"],
                                  plan["request_id"], plan["created_at"])
-    if plan.get('platform','linux')!='linux' or expected != {k: v for k, v in plan.items() if k not in ("reason", "platform")}:
+    if plan.get('platform','linux')!='linux' or expected != {k: v for k, v in plan.items() if k not in ("reason", "platform", "automatic")}:
         raise ValueError("isolation plan differs from local policy")
     instant = time.time() if now is None else now
     seconds = int(plan["expires_at"] - instant)
