@@ -2,6 +2,7 @@
 import json
 import os
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
@@ -46,9 +47,14 @@ async def overview(store, config):
     backend=config.get('assessment_api')
     if backend:
         parsed=urlsplit(backend['base_url'])
-        if parsed.scheme!='https' or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        if not (parsed.scheme=='https' or (parsed.scheme=='http' and parsed.hostname in ('127.0.0.1','::1'))) or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError('assessment_api requires a fixed HTTPS base URL')
-        token=os.environ.get(backend['token_env'])
+        token=os.environ.get(backend.get('token_env', ''))
+        if backend.get('token_file'):
+            try:
+                token=Path(backend['token_file']).read_text().strip()
+            except OSError:
+                token=None
         if not token:
             assessment['status']='credentials_unavailable'
         else:

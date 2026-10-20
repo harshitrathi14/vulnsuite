@@ -42,7 +42,12 @@ celery_app.conf.update(
     beat_schedule={
         "daily-azure-discovery": {
             "task": "vulnsuite.workers.tasks.discover_assets",
+            "args": [settings.tenant_default_id],
             "schedule": 86400.0,   # every 24h
         },
     },
 )
+
+# Do not enqueue cloud discovery without a configured cloud account.
+if not settings.azure.configured:
+    celery_app.conf.beat_schedule = {}

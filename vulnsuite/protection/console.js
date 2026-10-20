@@ -2,7 +2,7 @@
 let token='', data=null, tab='alerts', roles=[], chosen=new Set(), approval=null;
 const $=id=>document.getElementById(id);
 function node(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=String(text);if(cls)e.className=cls;return e;}
-async function api(path,options={}){const r=await fetch(path,{...options,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},cache:'no-store'});const result=await r.json();if(!r.ok)throw new Error(typeof result.detail==='string'?result.detail:'Request rejected');return result;}
+async function api(path,options={}){const r=await fetch(window.location.pathname.replace(/\/console\/?$/,'')+path,{...options,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},cache:'no-store'});const result=await r.json();if(!r.ok)throw new Error(typeof result.detail==='string'?result.detail:'Request rejected');return result;}
 function error(e){$('error').textContent=e.message||String(e);}
 const readable=v=>String(v??'—').replaceAll('_',' ');
 function details(title,value){$('detail-title').textContent=title;$('detail-content').textContent=JSON.stringify(value,null,2);$('approve').hidden=true;$('detail-dialog').showModal();}

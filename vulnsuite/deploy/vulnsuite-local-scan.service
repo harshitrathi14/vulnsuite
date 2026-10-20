@@ -1,0 +1,19 @@
+[Unit]
+Description=VulnSuite hourly local source security scan
+After=network.target docker.service
+[Service]
+User=nacl_pam_admin
+WorkingDirectory=/mnt/harshitrathi/vulnsuite
+EnvironmentFile=/mnt/harshitrathi/vulnsuite/runtime/server.env
+Environment="PYTHONPATH=/mnt/harshitrathi/vulnsuite"
+Environment="PATH=/mnt/harshitrathi/vulnsuite/.tools/bin:/mnt/harshitrathi/vulnsuite/.venv/bin:/mnt/harshitrathi/vulnsuite/.tools/prowler/bin:/mnt/harshitrathi/vulnsuite/.tools/checkov/bin:/usr/local/bin:/usr/bin:/usr/sbin"
+Type=oneshot
+ExecStart=/mnt/harshitrathi/vulnsuite/.venv/bin/python -m vulnsuite.monitoring.scan_local
+Restart=no
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+MemoryMax=4G
+CPUQuota=200%
+[Install]
+WantedBy=multi-user.target

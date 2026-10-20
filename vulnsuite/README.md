@@ -234,3 +234,114 @@ Release 0.4 adds Windows-native quarantine/restoration and temporary firewall
 isolation/release, using the same separate-actor approval workflow as Linux.
 Windows response requires explicit local enablement, native ACL/helper setup and
 staging validation; see the [Windows setup and recovery guide](../deploy/protection/windows/README.md).
+
+## Deployment on 10.91.16.86 (20 October 2026)
+
+The checkout was fast-forwarded from `dd5b320` to upstream `2c8c274` over HTTPS.
+All tracked upstream files are present. Deployment changes are included in the
+21 October 2026 source package and repository update.
+
+- Continuous monitoring: `http://10.91.16.86/VulnSuite/`; `/infosec` redirects here.
+- Vulnerability findings: `http://10.91.16.86/VulnSuite/findings/`.
+- Authenticated operations: `http://10.91.16.86/VulnSuite/operations/console`.
+  On this server, read `runtime/protection/operator-token` and paste it into the
+  console's access-token field. The file is mode 0600; do not commit or share it.
+- The assessment API is loopback-only on port 8137. Its RS256 verifier uses an
+  offline public JWKS, not enterprise SSO. The private signing key is in
+  `runtime/local-signing.pem` (0600). The protection bridge uses a tenant-scoped
+  viewer JWT lasting eight hours and renewed every four hours.
+
+### Actual coverage
+
+The monitoring collector runs every minute and the browser polls every 15 seconds.
+Sources are Defender health and local detection history, systemd service health,
+SSH journal aggregates, bounded Linux audit record counts, bounded Nginx request
+summaries, Docker inventory, TCP listeners, the findings database, protection
+agent telemetry, and scanner installation status. Source failures are explicit;
+a snapshot older than 180 seconds is stale and fails the health endpoint.
+
+The protection agent collects every ten seconds. Its configured sensors cover
+SSH failure/success correlation, HTTP 401/403 bursts on the IP's port-80 virtual
+host, selected system configuration file integrity, and suspicious process
+patterns. Delivery is durable and sensor health is visible. Its initial baseline
+is the deployment state, not a forensic certification of a clean host.
+
+Dashboard alerts are enabled. Email, Teams, webhooks, cloud SIEM feeds, automatic
+blocking, isolation, and quarantine are **disabled**. Azure Monitor and Site24x7
+agents exist but their cloud feeds are not configured. Audit records are counted;
+no additional kernel execution audit rules were loaded. Defender provides the
+existing endpoint malware protection; VulnSuite's separate malware scanner is not
+configured. There is no claim of complete intrusion detection.
+
+Hourly Bandit scans cover **VulnSuite's own source only**. Findings are persisted
+in the dedicated database. Other tools are installed but require chosen targets,
+cloud/cluster credentials, templates or vulnerability database downloads before
+those scans can provide coverage. No network-wide or active attack scans were run.
+The repository's old Trivy and ZAP release URLs returned 404; this deployment uses
+Trivy 0.76.0 and ZAP 2.17.0 with verified release asset hashes. ZAP has a private
+JRE17. Nmap 7.95 was built in `.tools/nmap-local`; system package installation
+failed before installation, so the host package stack was not used. Other binary
+versions follow `deploy/install-scanner-binaries.py`; Python tool environments are
+isolated in `.venv`, `.tools/prowler`, and `.tools/checkov`.
+
+### Services and storage
+
+Systemd services: `vulnsuite-monitor`, `vulnsuite-api`, `vulnsuite-worker`,
+`vulnsuite-beat`, `vulnsuite-findings`, `vulnsuite-protection`, `vulnsuite-agent`.
+Timers: `vulnsuite-collect`, `vulnsuite-local-scan`, `vulnsuite-read-token`.
+All long-running services and timers are enabled at boot. The cloud discovery
+schedule stays empty until Azure credentials are configured.
+
+Docker Compose project `vulnsuite`, in `deploy/server-compose.yml`, owns separate
+PostgreSQL and Redis volumes. Their ports are loopback-only (15436 and 16386).
+PostgreSQL application credentials use NOSUPERUSER/NOBYPASSRLS with FORCE RLS.
+Redis requires a random password. Secrets are in `../runtime/server.env` (0600).
+The original shared databases and application ports are not reused.
+
+The dashboard serves sanitized snapshots from `/var/lib/vulnsuite-monitor` using
+root-owned code in `/opt/vulnsuite-monitor`. Its collector is a bounded read-only
+root process; its HTTP server has a dynamic unprivileged identity. The protection
+agent has read/ptrace capabilities for host sensor visibility, no network-admin
+capability, and a read-only filesystem except its private state directory.
+
+Snapshot history is limited to 24 hours and monitoring alert history to seven
+days. Protection data uses the repository's seven-day retention policy. Findings
+persist in PostgreSQL. Nginx denial telemetry contains only IP and status, with a
+separate seven-rotation configuration at `/etc/logrotate.d/vulnsuite-security`.
+The server already has a failing logrotate service; the dashboard surfaces this.
+Operators should repair that existing host issue and monitor disk usage.
+
+Nginx changes are limited to a route include and an additional filtered denial
+log in the IP's HTTP server, plus a new log format. Existing routes remain in
+place. Route definitions are in `/etc/nginx/snippets/vulnsuite.conf`.
+
+### Checks and operations
+
+Validation: 344 automated tests passed, six skipped; skipped integration/native
+checks are not claimed as verified. Browser checks loaded monitoring, findings,
+and authenticated operations with no JavaScript errors. The assessment bridge
+returned real findings. Invalid and cross-tenant credentials were rejected, and
+a separate tenant could not read the local tenant's rows. Nginx configuration
+validation and HTTP health checks passed. The monitoring service was restarted
+and verified. Scanner installation does not imply every collector was exercised
+against a live target.
+
+Useful commands, run from the repository root:
+
+```bash
+curl -fsS http://10.91.16.86/VulnSuite/health
+sudo systemctl status vulnsuite-monitor vulnsuite-agent vulnsuite-protection
+sudo systemctl list-timers 'vulnsuite-*'
+sudo journalctl -u vulnsuite-agent -u vulnsuite-collect --since '1 hour ago'
+sudo systemctl start vulnsuite-local-scan
+cat runtime/protection/operator-token
+sudo docker compose --env-file runtime/server.env -p vulnsuite -f vulnsuite/deploy/server-compose.yml ps
+```
+
+Before changing configuration, preserve `runtime/`, PostgreSQL/Redis volumes,
+and `/var/lib/vulnsuite-monitor`. To roll back routing, remove only the VulnSuite
+include and extra denial access_log from the IP server, run `nginx -t`, then reload.
+Disable only `vulnsuite-*` services/timers and stop the `vulnsuite` Compose project
+without `-v` to retain data. Do not restore a whole shared Nginx config over later
+unrelated edits. A pre-deployment backup is available as
+`/etc/nginx/conf.d/nbfc-toolbox.conf.pre-vulnsuite`.

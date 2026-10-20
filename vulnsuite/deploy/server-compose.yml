@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vulnsuite
+      POSTGRES_USER: vulnsuite
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?required}
+    ports: ["127.0.0.1:15436:5432"]
+    volumes: ["pgdata:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vulnsuite"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?required}"]
+    ports: ["127.0.0.1:16386:6379"]
+    volumes: ["redisdata:/data"]
+volumes:
+  pgdata:
+  redisdata:

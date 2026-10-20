@@ -1,0 +1,7 @@
+[Unit]
+Description=Hourly source analysis of VulnSuite
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=1h
+[Install]
+WantedBy=timers.target

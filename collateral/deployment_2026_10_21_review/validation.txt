@@ -1,0 +1,19 @@
+VulnSuite deployment package — 21 October 2026
+
+Current source: /mnt/harshitrathi/vulnsuite (active Git checkout).
+The uppercase VulnSuite directory contains older exported source copies.
+
+Validation performed for this package:
+- tests/protection tests/security: 276 passed, 6 skipped, 2 FastAPI deprecation warnings.
+- Remaining tests: 68 passed.
+- Total: 344 passed, 6 skipped. No new live enforcement validation performed.
+- Release builder checks ZIP CRCs and compares every packaged file to its source.
+- RELEASE_MANIFEST.json records SHA-256 hashes for all packaged files.
+
+Includes current source, tests, deployment templates, monitoring dashboard,
+collector, scanner installer, token renewal and local scanning tools, updated
+PowerPoint/PDF, TXT/HTML email and repository documentation.
+Prior collateral validation records describe their historical releases.
+Runtime secrets, installed tools/environments, databases and old ZIPs excluded.
+Deployment templates contain server-specific paths and require adaptation.
+Containment and external alert delivery remain disabled in this deployment.

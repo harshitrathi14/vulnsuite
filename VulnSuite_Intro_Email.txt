@@ -40,6 +40,14 @@ VulnSuite was developed with assistance from frontier AI models, including Anthr
    • VulnSuite_Executive_Deck_Review.pdf — companion review copy of the presentation content.
    • Technical guides: vulnsuite/protection/OPERATIONS.md and deploy/protection/OPERATIONS.md in the project repository.
 
+7. LATEST DEPLOYMENT ENHANCEMENTS
+   • Validation on 21 October 2026: 344 automated tests passed and six were skipped. Skipped native/integration checks are not claimed as verified.
+   • Continuous monitoring: minute-by-minute host snapshots, stale-data health checks, service and scanner status, and dashboard alerts.
+   • Assessment operations: hourly scans of VulnSuite source, a dedicated findings dashboard, tenant-scoped read-token renewal and corrected database tenant context.
+   • Deployment: isolated PostgreSQL/Redis configuration, systemd services and timers, scanner installation tooling and documented operating limits.
+   • Containment and external email/webhook alerts remain disabled in this deployment; installed scanners require configured targets before providing coverage.
+   • Complete source, tests, deployment templates and current briefing materials: VulnSuite_v0.4_updated_2026-10-21.zip with a companion SHA-256 checksum.
+
 Regards,
 [Your Name]
 [Your Role]

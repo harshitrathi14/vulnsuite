@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
-from ..core.config import get_settings
+from vulnsuite.core.config import get_settings
 
 settings = get_settings()
 
@@ -24,7 +24,7 @@ engine = create_engine(_sync_url, pool_pre_ping=True)
 
 
 def _set_tenant(conn, tenant_id: str) -> None:
-    conn.execute(text("SET app.tenant_id = :t"), {"t": tenant_id})
+    conn.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": tenant_id})
 
 
 def _evidence_raw(evidence) -> dict:
@@ -89,9 +89,8 @@ def load_assets(tenant_id: str) -> pd.DataFrame:
 # ---------- sidebar ----------
 
 st.sidebar.title("🛡️ VulnSuite")
-tenant_id = st.sidebar.text_input(
-    "Tenant ID", value=settings.tenant_default_id,
-)
+tenant_id = settings.tenant_default_id
+st.sidebar.caption("Local deployment tenant")
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Env: **{settings.environment}**")
 st.sidebar.caption(f"Refreshed: {datetime.now(timezone.utc):%H:%M UTC}")
@@ -150,8 +149,9 @@ if exploited_count > 0:
 p0_count = buckets.get("P0", 0)
 if p0_count > 0:
     st.error(
-        f"⏰ **{p0_count} P0 finding(s) — CERT-In 6-hour reporting clock is running.** "
-        f"Review and file incident report via the Reports tab."
+        f"**{p0_count} P0 finding(s) require urgent review.** "
+        "Assess incident reporting obligations separately; a vulnerability finding alone "
+        "does not establish a reportable incident."
     )
 
 st.markdown("---")

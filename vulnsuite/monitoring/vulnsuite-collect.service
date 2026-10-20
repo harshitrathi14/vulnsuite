@@ -1,0 +1,13 @@
+[Unit]
+Description=VulnSuite read-only local telemetry collector
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3.11 /opt/vulnsuite-monitor/collector.py
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/vulnsuite-monitor
+PrivateTmp=yes
+NoNewPrivileges=yes
+TimeoutStartSec=120
+MemoryMax=256M
+Nice=10

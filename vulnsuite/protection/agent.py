@@ -167,6 +167,8 @@ def collect(config: dict, state: dict) -> None:
     if state["collection_paused"]:
         LOG.error("Outbox capacity reached; collection paused, retained events awaiting delivery")
         return
+    if state.get("delivery", {}).get("status") == "ok":
+        sensor_event(state, outbox, "delivery", "ok", "collected")
     offsets = state.setdefault("offsets", {})
     baseline = state.setdefault("files", {})
     if state.get('response_cleanup'):

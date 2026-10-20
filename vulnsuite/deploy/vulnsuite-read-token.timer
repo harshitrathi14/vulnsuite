@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh local read-only assessment token
+[Timer]
+OnBootSec=10
+OnUnitActiveSec=4h
+[Install]
+WantedBy=timers.target

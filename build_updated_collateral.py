@@ -23,7 +23,10 @@ NAVY, ORANGE, INK, MUTED, PANEL = '0A2540', 'F38020', '334155', '64748B', 'F3F6F
 FONT = 'DejaVu Sans'
 FONT_FILE = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
 BOLD_FILE = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
-DATE = '19 October 2026'
+if not Path(FONT_FILE).exists():
+    FONT_FILE = '/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf'
+    BOLD_FILE = '/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf'
+DATE = '21 October 2026'
 # Each slide has two clear bullet groups; these are editable PowerPoint text boxes.
 SLIDES = [
 ('VulnSuite', 'VULNERABILITY ASSESSMENT + SERVER PROTECTION',
@@ -185,6 +188,25 @@ I’d welcome feedback from security teams evaluating vulnerability management a
 '''
 
 
+
+# Current deployment additions; retain historical validation evidence above.
+SLIDES.append((
+ 'Continuous monitoring deployment', 'OCTOBER 2026 UPDATE',
+ ('Monitoring and findings', ['Minute-by-minute host snapshots', 'Stale snapshot health checks', 'Hourly scans of VulnSuite source', 'Agent delivery health refresh']),
+ ('Deployment controls', ['Dedicated PostgreSQL and Redis services', 'Renewed tenant-scoped read tokens', 'Systemd services and scheduled collectors', 'Containment and external alerts disabled']),
+ 'Coverage depends on configured sources and targets; installed scanners do not imply active coverage.'
+))
+DESCRIPTIONS.append('The deployment adds a continuous monitoring dashboard, bounded host collectors, local source scanning and service templates. Health checks expose stale snapshots, while tenant-scoped access connects findings to operations. Deployment details and limits are documented in vulnsuite/README.md.')
+SECTIONS.append(('Latest deployment enhancements', [
+ 'Validation on 21 October 2026: 344 automated tests passed and six were skipped. Skipped native/integration checks are not claimed as verified.',
+ 'Continuous monitoring: minute-by-minute host snapshots, stale-data health checks, service and scanner status, and dashboard alerts.',
+ 'Assessment operations: hourly scans of VulnSuite source, a dedicated findings dashboard, tenant-scoped read-token renewal and corrected database tenant context.',
+ 'Deployment: isolated PostgreSQL/Redis configuration, systemd services and timers, scanner installation tooling and documented operating limits.',
+ 'Containment and external email/webhook alerts remain disabled in this deployment; installed scanners require configured targets before providing coverage.',
+ 'Complete source, tests, deployment templates and current briefing materials: VulnSuite_v0.4_updated_2026-10-21.zip with a companion SHA-256 checksum.'
+]))
+
+
 def color(value): return RGBColor.from_string(value)
 
 def box(slide, x, y, w, h, fill):
@@ -297,7 +319,7 @@ def generate():
     page='''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VulnSuite briefing</title><style>body{margin:0;background:#f3f6fa;color:#334155;font:16px/1.6 Arial,sans-serif}main{max-width:820px;margin:24px auto;background:white;padding:36px;border-top:6px solid #f38020}h1{color:#0a2540;font-size:26px;line-height:1.3}h2{color:#0a2540;font-size:19px;margin-top:28px}li{margin:9px 0}small{color:#64748b}ul{padding-left:25px}</style></head><body><main>'''
     page+='<small>CONFIDENTIAL — INTERNAL USE ONLY</small><h1>'+escape(SUBJECT)+'</h1><p>Dear [CISO Name],</p><p>'+escape(intro)+'</p><p>'+escape(DEVELOPMENT_NOTE)+'</p>'+sections+'<p>Regards,<br>[Your Name]<br>[Your Role]<br>[Phone] | [Email]</p></main></body></html>'
     (ROOT/'VulnSuite_Intro_Email.html').write_text(page,encoding='utf-8')
-    (ROOT/'VulnSuite_LinkedIn_Post.txt').write_text(LINKEDIN,encoding='utf-8')
-    print(f'Generated {len(SLIDES)} slides, native bullet lists, TXT/HTML email, LinkedIn draft and companion review PDF.')
+    # LinkedIn draft was removed from the repository; do not recreate it.
+    print(f'Generated {len(SLIDES)} slides, native bullet lists, TXT/HTML email and companion review PDF.')
 
 if __name__=='__main__': generate()

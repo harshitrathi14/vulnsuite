@@ -1,0 +1,23 @@
+[Unit]
+Description=VulnSuite agent
+After=network.target docker.service
+[Service]
+User=nacl_pam_admin
+WorkingDirectory=/mnt/harshitrathi/vulnsuite
+EnvironmentFile=/mnt/harshitrathi/vulnsuite/runtime/server.env
+Environment="PYTHONPATH=/mnt/harshitrathi/vulnsuite"
+Environment="PATH=/mnt/harshitrathi/vulnsuite/.tools/bin:/mnt/harshitrathi/vulnsuite/.venv/bin:/mnt/harshitrathi/vulnsuite/.tools/prowler/bin:/mnt/harshitrathi/vulnsuite/.tools/checkov/bin:/usr/local/bin:/usr/bin:/usr/sbin"
+Environment=VULNSUITE_PROTECTION_CONFIG=/mnt/harshitrathi/vulnsuite/runtime/protection/server.json
+ExecStart=/mnt/harshitrathi/vulnsuite/.venv/bin/python -m vulnsuite.protection.agent --config /mnt/harshitrathi/vulnsuite/runtime/protection/agent.json
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+ProtectSystem=strict
+ReadWritePaths=/mnt/harshitrathi/vulnsuite/runtime/protection
+PrivateTmp=yes
+MemoryMax=4G
+CPUQuota=200%
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=VulnSuite continuous security dashboard
+After=network.target
+[Service]
+DynamicUser=yes
+ExecStart=/usr/bin/python3.11 /opt/vulnsuite-monitor/server.py
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+MemoryMax=128M
+[Install]
+WantedBy=multi-user.target
